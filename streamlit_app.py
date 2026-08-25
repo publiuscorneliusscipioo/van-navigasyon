@@ -64,6 +64,9 @@ if not st.session_state.giris_yapildi:
 
 # --- HARİTA VE ARAMA ---
 else:
+    # İdeal boyutta, ikonsuz başlık
+    st.markdown("### Van Navigasyon")
+
     with st.form("arama_formu"):
         tesisat_no = st.text_input("Tesisat No", placeholder="Tesisat No girin...", value=st.session_state.aktif_tesisat if st.session_state.aktif_tesisat else "")
         ara_submitted = st.form_submit_button("ARA", use_container_width=True)
@@ -140,5 +143,5 @@ else:
             popup=folium.Popup(popup_html, max_width=300)
         ).add_to(m)
 
-    # Haritayı ekrana bas (Sayfanın kaydırılmasına olanak tanıyacak yükseklikte)
+    # Haritayı ekrana bas
     st_folium(m, use_container_width=True, height=500)
