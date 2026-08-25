@@ -40,7 +40,7 @@ if "hata_mesaji" not in st.session_state:
 st.markdown("""
     <style>
     .block-container {
-        padding-top: 1rem;
+        padding-top: 0.8rem;
         padding-bottom: 0.5rem;
         padding-left: 0.8rem;
         padding-right: 0.8rem;
@@ -50,7 +50,7 @@ st.markdown("""
 
 # --- GİRİŞ ---
 if not st.session_state.giris_yapildi:
-    st.title("📍 Van-Navigasyon")
+    st.title("Van-Navigasyon")  # İkon kaldırıldı
     with st.form("login_form"):
         kadi = st.text_input("Kullanıcı Adı", placeholder="Kullanıcı Adı")
         sifre = st.text_input("Şifre", type="password", placeholder="Şifre")
@@ -64,9 +64,8 @@ if not st.session_state.giris_yapildi:
 
 # --- HARİTA VE ARAMA ---
 else:
-    st.markdown("### 🔎 Tesisat Arama")
+    # Başlık ve ikon tamamen kaldırıldı, doğrudan arama formuna geçiliyor
 
-    # Form kullanarak arama alanı (Çıkış butonu kaldırıldı, alan tam genişlik oldu)
     with st.form("arama_formu"):
         tesisat_no = st.text_input("Tesisat No", placeholder="Tesisat No girin...", value=st.session_state.aktif_tesisat if st.session_state.aktif_tesisat else "")
         ara_submitted = st.form_submit_button("ARA", use_container_width=True)
@@ -143,5 +142,5 @@ else:
             popup=folium.Popup(popup_html, max_width=300)
         ).add_to(m)
 
-    # Haritayı ekrana bas (yüksekliği telefona tam oturacak şekilde optimize edildi)
-    st_folium(m, use_container_width=True, height=480)
+    # Haritayı ekrana bas
+    st_folium(m, use_container_width=True, height=500)
