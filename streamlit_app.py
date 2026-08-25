@@ -36,21 +36,21 @@ if "aktif_tesisat" not in st.session_state:
 if "hata_mesaji" not in st.session_state:
     st.session_state.hata_mesaji = None
 
-# Mobilde üst boşlukları azaltmak için özel CSS
+# Telefonda üstlerin kesilmemesi ve rahat kaydırma (scroll) olması için ideal kenar boşlukları
 st.markdown("""
     <style>
     .block-container {
-        padding-top: 0.8rem;
-        padding-bottom: 0.5rem;
-        padding-left: 0.8rem;
-        padding-right: 0.8rem;
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
     }
     </style>
 """, unsafe_allow_html=True)
 
 # --- GİRİŞ ---
 if not st.session_state.giris_yapildi:
-    st.title("Van-Navigasyon")  # İkon kaldırıldı
+    st.title("Van-Navigasyon")
     with st.form("login_form"):
         kadi = st.text_input("Kullanıcı Adı", placeholder="Kullanıcı Adı")
         sifre = st.text_input("Şifre", type="password", placeholder="Şifre")
@@ -64,8 +64,6 @@ if not st.session_state.giris_yapildi:
 
 # --- HARİTA VE ARAMA ---
 else:
-    # Başlık ve ikon tamamen kaldırıldı, doğrudan arama formuna geçiliyor
-
     with st.form("arama_formu"):
         tesisat_no = st.text_input("Tesisat No", placeholder="Tesisat No girin...", value=st.session_state.aktif_tesisat if st.session_state.aktif_tesisat else "")
         ara_submitted = st.form_submit_button("ARA", use_container_width=True)
@@ -142,5 +140,5 @@ else:
             popup=folium.Popup(popup_html, max_width=300)
         ).add_to(m)
 
-    # Haritayı ekrana bas
+    # Haritayı ekrana bas (Sayfanın kaydırılmasına olanak tanıyacak yükseklikte)
     st_folium(m, use_container_width=True, height=500)
