@@ -1,14 +1,17 @@
 import os
+import json
 from io import BytesIO
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
+
 import folium
 from streamlit_folium import st_folium
 
 
 # =========================================================
-# SAYFA AYARLARI
+# SAYFA
 # =========================================================
 
 st.set_page_config(
@@ -19,7 +22,7 @@ st.set_page_config(
 
 
 # =========================================================
-# DOSYA KLASÖRÜ
+# DOSYA YOLLARI
 # =========================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,30 +39,28 @@ OKUMA_ROTALARI_DOSYA = os.path.join(
 
 
 # =========================================================
-# CSS
+# GENEL CSS
 # =========================================================
 
-st.markdown("""
-<style>
+st.markdown(
+    """
+    <style>
 
-.block-container {
-    padding-top: 1.2rem;
-    padding-bottom: 1rem;
-    padding-left: 1.5rem;
-    padding-right: 1.5rem;
-}
+    .block-container {
+        padding-top: 1.2rem;
+        padding-bottom: 1.5rem;
+        padding-left: 1.5rem;
+        padding-right: 1.5rem;
+    }
 
-.rota-baslik {
-    font-size: 22px;
-    font-weight: 700;
-}
-
-</style>
-""", unsafe_allow_html=True)
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 
 # =========================================================
-# TESİSATLAR EXCEL
+# ANA TESİSAT EXCEL
 # =========================================================
 
 @st.cache_data
@@ -148,7 +149,7 @@ def okuma_rotasi_verisi_yukle():
             ]
         ].copy()
 
-        # Tesisat
+
         rota_df["Tesisat"] = (
             rota_df["Tesisat"]
             .fillna("")
@@ -156,7 +157,7 @@ def okuma_rotasi_verisi_yukle():
             .str.strip()
         )
 
-        # Okuma rotası
+
         rota_df["Okuma Rotası"] = (
             rota_df["Okuma Rotası"]
             .fillna("")
@@ -164,7 +165,7 @@ def okuma_rotasi_verisi_yukle():
             .str.strip()
         )
 
-        # Enlem
+
         rota_df["Enlem"] = (
             rota_df["Enlem"]
             .fillna("")
@@ -172,7 +173,7 @@ def okuma_rotasi_verisi_yukle():
             .str.replace(",", ".", regex=False)
         )
 
-        # Boylam
+
         rota_df["Boylam"] = (
             rota_df["Boylam"]
             .fillna("")
@@ -180,17 +181,19 @@ def okuma_rotasi_verisi_yukle():
             .str.replace(",", ".", regex=False)
         )
 
+
         rota_df["Enlem"] = pd.to_numeric(
             rota_df["Enlem"],
             errors="coerce"
         )
+
 
         rota_df["Boylam"] = pd.to_numeric(
             rota_df["Boylam"],
             errors="coerce"
         )
 
-        # Geçersiz satırları çıkar
+
         rota_df = rota_df[
             (rota_df["Tesisat"] != "")
             &
@@ -200,6 +203,19 @@ def okuma_rotasi_verisi_yukle():
             &
             (rota_df["Boylam"].notna())
         ].copy()
+
+
+        # Türkiye dışında bariz hatalı koordinatlar gelirse çıkar
+        rota_df = rota_df[
+            (rota_df["Enlem"] > 30)
+            &
+            (rota_df["Enlem"] < 45)
+            &
+            (rota_df["Boylam"] > 20)
+            &
+            (rota_df["Boylam"] < 50)
+        ].copy()
+
 
         return rota_df
 
@@ -216,6 +232,187 @@ okuma_df = okuma_rotasi_verisi_yukle()
 
 
 # =========================================================
+# CONVEX HULL
+#
+# Excelde hazır bölge sınırı olmadığı için tesisatların
+# dış çevresini hesaplar.
+# =========================================================
+
+def convex_hull(points):
+
+    if len(points) <= 1:
+        return points
+
+    # x = longitude
+    # y = latitude
+
+    pts = sorted(
+        set(
+            (float(lon), float(lat))
+            for lat, lon in points
+        )
+    )
+
+    if len(pts) <= 1:
+        return [
+            [pts[0][1], pts[0][0]]
+        ]
+
+
+    def cross(o, a, b):
+
+        return (
+            (a[0] - o[0]) *
+            (b[1] - o[1])
+            -
+            (a[1] - o[1]) *
+            (b[0] - o[0])
+        )
+
+
+    lower = []
+
+    for p in pts:
+
+        while (
+            len(lower) >= 2
+            and
+            cross(
+                lower[-2],
+                lower[-1],
+                p
+            ) <= 0
+        ):
+
+            lower.pop()
+
+        lower.append(p)
+
+
+    upper = []
+
+    for p in reversed(pts):
+
+        while (
+            len(upper) >= 2
+            and
+            cross(
+                upper[-2],
+                upper[-1],
+                p
+            ) <= 0
+        ):
+
+            upper.pop()
+
+        upper.append(p)
+
+
+    hull = (
+        lower[:-1]
+        +
+        upper[:-1]
+    )
+
+
+    return [
+        [y, x]
+        for x, y in hull
+    ]
+
+
+# =========================================================
+# DEMO1 İÇİN TARAYICI VERİSİ
+# =========================================================
+
+@st.cache_data
+def demo1_verisini_hazirla(dataframe):
+
+    sonuc = {}
+
+
+    for rota_adi, grup in dataframe.groupby(
+        "Okuma Rotası",
+        sort=True
+    ):
+
+        binalar = []
+
+        noktalar = []
+
+
+        for _, row in grup.iterrows():
+
+            tesisat = str(
+                row["Tesisat"]
+            ).strip()
+
+            lat = float(
+                row["Enlem"]
+            )
+
+            lon = float(
+                row["Boylam"]
+            )
+
+
+            binalar.append({
+                "tesisat": tesisat,
+                "lat": lat,
+                "lon": lon
+            })
+
+
+            noktalar.append(
+                (lat, lon)
+            )
+
+
+        merkez_lat = sum(
+            p[0]
+            for p in noktalar
+        ) / len(noktalar)
+
+
+        merkez_lon = sum(
+            p[1]
+            for p in noktalar
+        ) / len(noktalar)
+
+
+        # Rotanın çevresini hesapla
+        hull = convex_hull(
+            noktalar
+        )
+
+
+        sonuc[str(rota_adi)] = {
+
+            "kod":
+            str(rota_adi),
+
+            "n":
+            len(binalar),
+
+            "clat":
+            merkez_lat,
+
+            "clon":
+            merkez_lon,
+
+            "polygon":
+            hull,
+
+            "buildings":
+            binalar
+
+        }
+
+
+    return sonuc
+
+
+# =========================================================
 # SESSION STATE
 # =========================================================
 
@@ -227,7 +424,7 @@ if "kullanici_rolu" not in st.session_state:
 
 
 # =========================================================
-# ADMIN SESSION
+# ADMIN
 # =========================================================
 
 if "son_lat" not in st.session_state:
@@ -247,7 +444,7 @@ if "hata_mesaji" not in st.session_state:
 
 
 # =========================================================
-# DEMO SESSION
+# DEMO
 # =========================================================
 
 if "demo_yuklenenler" not in st.session_state:
@@ -264,30 +461,25 @@ if "demo_rota_adi" not in st.session_state:
 
 
 # =========================================================
-# DEMO1 SESSION
-# =========================================================
-
-if "demo1_rota" not in st.session_state:
-    st.session_state.demo1_rota = None
-
-if "demo1_secili_tesisat" not in st.session_state:
-    st.session_state.demo1_secili_tesisat = None
-
-
-# =========================================================
-# GİRİŞ
+# LOGIN
 # =========================================================
 
 if not st.session_state.giris_yapildi:
 
-    st.title("📍 Van-Navigasyon Giriş")
+    st.title(
+        "📍 Van-Navigasyon Giriş"
+    )
 
-    with st.form("login_form"):
+
+    with st.form(
+        "login_form"
+    ):
 
         kadi = st.text_input(
             "Kullanıcı Adı",
             placeholder="Kullanıcı Adı"
         )
+
 
         sifre = st.text_input(
             "Şifre",
@@ -295,10 +487,12 @@ if not st.session_state.giris_yapildi:
             placeholder="Şifre"
         )
 
+
         giris = st.form_submit_button(
             "GİRİŞ YAP",
             use_container_width=True
         )
+
 
         if giris:
 
@@ -306,7 +500,11 @@ if not st.session_state.giris_yapildi:
             # ADMIN
             # =================================================
 
-            if kadi == "admin" and sifre == "admin":
+            if (
+                kadi == "admin"
+                and
+                sifre == "admin"
+            ):
 
                 st.session_state.giris_yapildi = True
                 st.session_state.kullanici_rolu = "admin"
@@ -318,7 +516,11 @@ if not st.session_state.giris_yapildi:
             # DEMO
             # =================================================
 
-            elif kadi == "demo" and sifre == "demo":
+            elif (
+                kadi == "demo"
+                and
+                sifre == "demo"
+            ):
 
                 st.session_state.giris_yapildi = True
                 st.session_state.kullanici_rolu = "demo"
@@ -335,13 +537,14 @@ if not st.session_state.giris_yapildi:
             # DEMO1
             # =================================================
 
-            elif kadi == "demo1" and sifre == "demo1":
+            elif (
+                kadi == "demo1"
+                and
+                sifre == "demo1"
+            ):
 
                 st.session_state.giris_yapildi = True
                 st.session_state.kullanici_rolu = "demo1"
-
-                st.session_state.demo1_rota = None
-                st.session_state.demo1_secili_tesisat = None
 
                 st.rerun()
 
@@ -354,12 +557,19 @@ if not st.session_state.giris_yapildi:
 
 
 # =========================================================
-# ADMIN PANELİ
+# ADMIN PANEL
 # =========================================================
 
-elif st.session_state.kullanici_rolu == "admin":
+elif (
+    st.session_state.kullanici_rolu
+    ==
+    "admin"
+):
 
-    col_baslik, col_cikis = st.columns([8, 1])
+    col_baslik, col_cikis = st.columns(
+        [8, 1]
+    )
+
 
     with col_baslik:
 
@@ -367,9 +577,12 @@ elif st.session_state.kullanici_rolu == "admin":
             "### Van Navigasyon - Admin Paneli"
         )
 
+
     with col_cikis:
 
-        if st.button("Çıkış Yap"):
+        if st.button(
+            "Çıkış Yap"
+        ):
 
             st.session_state.giris_yapildi = False
             st.session_state.kullanici_rolu = None
@@ -377,17 +590,33 @@ elif st.session_state.kullanici_rolu == "admin":
             st.rerun()
 
 
-    with st.form("arama_formu"):
+    # =====================================================
+    # ARAMA
+    # =====================================================
+
+    with st.form(
+        "arama_formu"
+    ):
 
         tesisat_no = st.text_input(
+
             "Tesisat No",
-            placeholder="Tesisat No girin...",
+
+            placeholder=
+            "Tesisat No girin...",
+
             value=(
                 st.session_state.aktif_tesisat
-                if st.session_state.aktif_tesisat
-                else ""
+
+                if
+                st.session_state.aktif_tesisat
+
+                else
+                ""
             )
+
         )
+
 
         ara_submitted = st.form_submit_button(
             "ARA",
@@ -406,7 +635,11 @@ elif st.session_state.kullanici_rolu == "admin":
             st.session_state.aktif_tesisat = None
 
 
-        elif df is None or df.empty:
+        elif (
+            df is None
+            or
+            df.empty
+        ):
 
             st.session_state.hata_mesaji = (
                 "⚠️ Tesisatlar.xlsx dosyası bulunamadı!"
@@ -418,7 +651,9 @@ elif st.session_state.kullanici_rolu == "admin":
         else:
 
             bulunan = df[
-                df["Tesisat"] == tesisat_no.strip()
+                df["Tesisat"]
+                ==
+                tesisat_no.strip()
             ]
 
 
@@ -440,21 +675,40 @@ elif st.session_state.kullanici_rolu == "admin":
 
 
                 for l_col, b_col in [
-                    ("Enlem.1", "Boylam.1"),
-                    ("Enlem", "Boylam")
+
+                    (
+                        "Enlem.1",
+                        "Boylam.1"
+                    ),
+
+                    (
+                        "Enlem",
+                        "Boylam"
+                    )
+
                 ]:
 
                     try:
 
                         val_lat = float(
-                            str(row[l_col])
-                            .replace(",", ".")
+                            str(
+                                row[l_col]
+                            ).replace(
+                                ",",
+                                "."
+                            )
                         )
 
+
                         val_lon = float(
-                            str(row[b_col])
-                            .replace(",", ".")
+                            str(
+                                row[b_col]
+                            ).replace(
+                                ",",
+                                "."
+                            )
                         )
+
 
                         if (
                             val_lat != 0
@@ -504,6 +758,7 @@ elif st.session_state.kullanici_rolu == "admin":
             st.session_state.hata_mesaji
         )
 
+
     elif st.session_state.aktif_tesisat:
 
         st.success(
@@ -512,19 +767,28 @@ elif st.session_state.kullanici_rolu == "admin":
         )
 
 
+    # =====================================================
+    # ADMIN HARİTA
+    # =====================================================
+
     m = folium.Map(
+
         location=[
             st.session_state.son_lat,
             st.session_state.son_lon
         ],
-        zoom_start=st.session_state.son_zoom
+
+        zoom_start=
+        st.session_state.son_zoom
+
     )
 
 
     if st.session_state.aktif_tesisat:
 
         gmaps_url = (
-            "https://www.google.com/maps/dir/?api=1"
+            "https://www.google.com/maps/dir/"
+            "?api=1"
             f"&destination="
             f"{st.session_state.son_lat},"
             f"{st.session_state.son_lon}"
@@ -542,17 +806,20 @@ elif st.session_state.kullanici_rolu == "admin":
 
             <br><br>
 
-            <a href="{gmaps_url}"
-               target="_blank"
-               style="
-               background:#2563eb;
-               color:white;
-               padding:7px 12px;
-               text-decoration:none;
-               border-radius:5px;
-               display:inline-block;
-               font-weight:bold;
-               ">
+            <a
+                href="{gmaps_url}"
+                target="_blank"
+
+                style="
+                    background:#2563eb;
+                    color:white;
+                    padding:7px 12px;
+                    text-decoration:none;
+                    border-radius:5px;
+                    display:inline-block;
+                    font-weight:bold;
+                "
+            >
 
                 🚗 Yol Tarifi Al
 
@@ -598,9 +865,16 @@ elif st.session_state.kullanici_rolu == "admin":
 # DEMO / ROTA PLANLAMA
 # =========================================================
 
-elif st.session_state.kullanici_rolu == "demo":
+elif (
+    st.session_state.kullanici_rolu
+    ==
+    "demo"
+):
 
-    col_baslik, col_cikis = st.columns([8, 1])
+    col_baslik, col_cikis = st.columns(
+        [8, 1]
+    )
+
 
     with col_baslik:
 
@@ -608,9 +882,12 @@ elif st.session_state.kullanici_rolu == "demo":
             "### 🗺️ Rota Planlama"
         )
 
+
     with col_cikis:
 
-        if st.button("Çıkış Yap"):
+        if st.button(
+            "Çıkış Yap"
+        ):
 
             st.session_state.giris_yapildi = False
             st.session_state.kullanici_rolu = None
@@ -633,6 +910,12 @@ elif st.session_state.kullanici_rolu == "demo":
             "### 📥 Toplu Tesisat"
         )
 
+
+        st.caption(
+            "Tesisat numaralarını alt alta yazın."
+        )
+
+
         toplu_input = st.text_area(
 
             "Tesisat Listesi",
@@ -642,9 +925,11 @@ elif st.session_state.kullanici_rolu == "demo":
             placeholder=
             "100001\n"
             "100002\n"
-            "100003",
+            "100003\n"
+            "100004",
 
-            label_visibility="collapsed"
+            label_visibility=
+            "collapsed"
 
         )
 
@@ -654,30 +939,48 @@ elif st.session_state.kullanici_rolu == "demo":
             use_container_width=True
         ):
 
-            if df is None or df.empty:
+            if (
+                df is None
+                or
+                df.empty
+            ):
 
                 st.error(
                     "Tesisatlar.xlsx dosyası bulunamadı!"
                 )
 
+
             else:
 
                 girilen_liste = [
+
                     x.strip()
-                    for x in toplu_input.splitlines()
+
+                    for x
+                    in toplu_input.splitlines()
+
                     if x.strip()
+
                 ]
+
 
                 yeni_sayisi = 0
 
+                bulunamayanlar = []
+
 
                 for t_no in girilen_liste:
+
+                    # -----------------------------------------
+                    # aktif alanda var mı
+                    # -----------------------------------------
 
                     mevcut = any(
 
                         x["tesisat"] == t_no
 
-                        for x in (
+                        for x
+                        in (
                             st.session_state.demo_yuklenenler
                             +
                             st.session_state.demo_secilenler
@@ -685,16 +988,52 @@ elif st.session_state.kullanici_rolu == "demo":
 
                     )
 
+
                     if mevcut:
                         continue
 
 
+                    # -----------------------------------------
+                    # kayıtlı rotalarda var mı
+                    # -----------------------------------------
+
+                    kayitli_mi = False
+
+
+                    for rota in (
+                        st.session_state.demo_kayitli_rotalar
+                    ):
+
+                        if any(
+
+                            x["Tesisat"] == t_no
+
+                            for x
+                            in rota["tesisatlar"]
+
+                        ):
+
+                            kayitli_mi = True
+                            break
+
+
+                    if kayitli_mi:
+                        continue
+
+
                     match = df[
-                        df["Tesisat"] == t_no
+                        df["Tesisat"]
+                        ==
+                        t_no
                     ]
 
 
                     if match.empty:
+
+                        bulunamayanlar.append(
+                            t_no
+                        )
+
                         continue
 
 
@@ -705,21 +1044,40 @@ elif st.session_state.kullanici_rolu == "demo":
 
 
                     for l_col, b_col in [
-                        ("Enlem.1", "Boylam.1"),
-                        ("Enlem", "Boylam")
+
+                        (
+                            "Enlem.1",
+                            "Boylam.1"
+                        ),
+
+                        (
+                            "Enlem",
+                            "Boylam"
+                        )
+
                     ]:
 
                         try:
 
                             v_lat = float(
-                                str(row[l_col])
-                                .replace(",", ".")
+                                str(
+                                    row[l_col]
+                                ).replace(
+                                    ",",
+                                    "."
+                                )
                             )
 
+
                             v_lon = float(
-                                str(row[b_col])
-                                .replace(",", ".")
+                                str(
+                                    row[b_col]
+                                ).replace(
+                                    ",",
+                                    "."
+                                )
                             )
+
 
                             if (
                                 v_lat != 0
@@ -745,18 +1103,46 @@ elif st.session_state.kullanici_rolu == "demo":
 
                         st.session_state.demo_yuklenenler.append({
 
-                            "tesisat": t_no,
-                            "lat": lat,
-                            "lon": lon
+                            "tesisat":
+                            t_no,
+
+                            "lat":
+                            lat,
+
+                            "lon":
+                            lon
 
                         })
+
 
                         yeni_sayisi += 1
 
 
-                st.success(
-                    f"{yeni_sayisi} tesisat haritaya eklendi."
-                )
+                    else:
+
+                        bulunamayanlar.append(
+                            f"{t_no} - koordinat yok"
+                        )
+
+
+                if yeni_sayisi:
+
+                    st.success(
+                        f"✅ {yeni_sayisi} tesisat "
+                        f"haritaya eklendi."
+                    )
+
+
+                if bulunamayanlar:
+
+                    st.warning(
+                        "Bulunamayan tesisatlar: "
+                        +
+                        ", ".join(
+                            bulunamayanlar
+                        )
+                    )
+
 
                 st.rerun()
 
@@ -773,32 +1159,60 @@ elif st.session_state.kullanici_rolu == "demo":
 
 
         st.metric(
-            "📌 Rota Havuzu",
+            "📌 Aktif Rota",
             len(
                 st.session_state.demo_secilenler
             )
         )
 
 
+        st.markdown("---")
+
+
+        if st.button(
+            "🗑️ Tümünü Temizle",
+            use_container_width=True
+        ):
+
+            st.session_state.demo_yuklenenler = []
+
+            st.session_state.demo_secilenler = []
+
+            st.rerun()
+
+
     # =====================================================
-    # ORTA HARİTA
+    # ORTA
     # =====================================================
 
     with orta:
 
+        st.markdown(
+            "### 🗺️ Harita"
+        )
+
+
         if st.session_state.demo_yuklenenler:
 
             merkez = [
+
                 st.session_state.demo_yuklenenler[0]["lat"],
+
                 st.session_state.demo_yuklenenler[0]["lon"]
+
             ]
+
 
         elif st.session_state.demo_secilenler:
 
             merkez = [
+
                 st.session_state.demo_secilenler[0]["lat"],
+
                 st.session_state.demo_secilenler[0]["lon"]
+
             ]
+
 
         else:
 
@@ -825,12 +1239,6 @@ elif st.session_state.kullanici_rolu == "demo":
                     item["lon"]
                 ],
 
-                popup=folium.Popup(
-                    f"<b>Tesisat:</b> "
-                    f"{item['tesisat']}",
-                    max_width=200
-                ),
-
                 tooltip=str(
                     item["tesisat"]
                 ),
@@ -840,7 +1248,9 @@ elif st.session_state.kullanici_rolu == "demo":
                     icon="info-sign"
                 )
 
-            ).add_to(m_demo)
+            ).add_to(
+                m_demo
+            )
 
 
         map_data = st_folium(
@@ -867,8 +1277,13 @@ elif st.session_state.kullanici_rolu == "demo":
 
             if clicked:
 
-                click_lat = clicked.get("lat")
-                click_lon = clicked.get("lng")
+                click_lat = clicked.get(
+                    "lat"
+                )
+
+                click_lon = clicked.get(
+                    "lng"
+                )
 
 
                 if (
@@ -878,7 +1293,10 @@ elif st.session_state.kullanici_rolu == "demo":
                 ):
 
                     secilen = None
-                    en_yakin = float("inf")
+
+                    en_yakin = float(
+                        "inf"
+                    )
 
 
                     for item in (
@@ -886,23 +1304,28 @@ elif st.session_state.kullanici_rolu == "demo":
                     ):
 
                         mesafe = (
+
                             abs(
                                 item["lat"]
                                 -
                                 click_lat
                             )
+
                             +
+
                             abs(
                                 item["lon"]
                                 -
                                 click_lon
                             )
+
                         )
 
 
                         if mesafe < en_yakin:
 
                             en_yakin = mesafe
+
                             secilen = item
 
 
@@ -919,8 +1342,10 @@ elif st.session_state.kullanici_rolu == "demo":
                             for x
                             in st.session_state.demo_yuklenenler
 
-                            if x["tesisat"]
-                            != secilen["tesisat"]
+                            if
+                            x["tesisat"]
+                            !=
+                            secilen["tesisat"]
 
                         ]
 
@@ -928,6 +1353,7 @@ elif st.session_state.kullanici_rolu == "demo":
                         st.session_state.demo_secilenler.append(
                             secilen
                         )
+
 
                         st.rerun()
 
@@ -944,13 +1370,32 @@ elif st.session_state.kullanici_rolu == "demo":
 
 
         rota_adi = st.text_input(
+
             "Rota Adı",
-            value=st.session_state.demo_rota_adi
+
+            value=
+            st.session_state.demo_rota_adi,
+
+            key=
+            "demo_rota_adi_input"
+
         )
 
 
-        st.session_state.demo_rota_adi = rota_adi
+        st.session_state.demo_rota_adi = (
+            rota_adi
+        )
 
+
+        st.caption(
+            f"Seçilen tesisat: "
+            f"**{len(st.session_state.demo_secilenler)}**"
+        )
+
+
+        # -----------------------------------------
+        # SCROLL HAVUZ
+        # -----------------------------------------
 
         with st.container(
             height=430,
@@ -965,9 +1410,14 @@ elif st.session_state.kullanici_rolu == "demo":
 
                     if st.button(
 
-                        f"{idx + 1}. {item['tesisat']}",
+                        f"{idx + 1}. "
+                        f"{item['tesisat']}",
 
-                        key=f"havuz_{idx}_{item['tesisat']}",
+                        key=(
+                            f"havuz_"
+                            f"{idx}_"
+                            f"{item['tesisat']}"
+                        ),
 
                         use_container_width=True
 
@@ -977,11 +1427,14 @@ elif st.session_state.kullanici_rolu == "demo":
                             idx
                         )
 
+
                         st.session_state.demo_yuklenenler.append(
                             item
                         )
 
+
                         st.rerun()
+
 
             else:
 
@@ -990,6 +1443,15 @@ elif st.session_state.kullanici_rolu == "demo":
                 )
 
 
+        st.caption(
+            "💡 Tesisata tıklarsanız haritaya geri gönderilir."
+        )
+
+
+        # -----------------------------------------
+        # ROTA KAYDET
+        # -----------------------------------------
+
         if st.session_state.demo_secilenler:
 
             if st.button(
@@ -997,47 +1459,100 @@ elif st.session_state.kullanici_rolu == "demo":
                 use_container_width=True
             ):
 
-                kayit = []
+                if not rota_adi.strip():
 
-                for sira, item in enumerate(
-                    st.session_state.demo_secilenler,
-                    start=1
-                ):
-
-                    kayit.append({
-
-                        "Rota Adı": rota_adi,
-                        "Sıra": sira,
-                        "Tesisat": item["tesisat"]
-
-                    })
+                    st.error(
+                        "Lütfen rota adı girin."
+                    )
 
 
-                st.session_state.demo_kayitli_rotalar.append({
+                else:
 
-                    "rota_adi": rota_adi,
-                    "tesisatlar": kayit
+                    ayni_isim = any(
 
-                })
+                        r["rota_adi"].lower()
+                        ==
+                        rota_adi.strip().lower()
 
+                        for r
+                        in st.session_state.demo_kayitli_rotalar
 
-                st.session_state.demo_secilenler = []
-
-                st.session_state.demo_rota_adi = (
-                    f"Rota "
-                    f"{len(st.session_state.demo_kayitli_rotalar) + 1}"
-                )
-
-                st.rerun()
+                    )
 
 
-        # =================================================
+                    if ayni_isim:
+
+                        st.warning(
+                            "Bu isimde bir rota zaten kayıtlı."
+                        )
+
+
+                    else:
+
+                        kayit = []
+
+
+                        for sira, item in enumerate(
+
+                            st.session_state.demo_secilenler,
+
+                            start=1
+
+                        ):
+
+                            kayit.append({
+
+                                "Rota Adı":
+                                rota_adi.strip(),
+
+                                "Sıra":
+                                sira,
+
+                                "Tesisat":
+                                item["tesisat"]
+
+                            })
+
+
+                        st.session_state.demo_kayitli_rotalar.append({
+
+                            "rota_adi":
+                            rota_adi.strip(),
+
+                            "tesisatlar":
+                            kayit
+
+                        })
+
+
+                        st.session_state.demo_secilenler = []
+
+
+                        sonraki_no = (
+                            len(
+                                st.session_state.demo_kayitli_rotalar
+                            )
+                            +
+                            1
+                        )
+
+
+                        st.session_state.demo_rota_adi = (
+                            f"Rota {sonraki_no}"
+                        )
+
+
+                        st.rerun()
+
+
+        # -----------------------------------------
         # KAYITLI ROTALAR
-        # =================================================
+        # -----------------------------------------
 
         if st.session_state.demo_kayitli_rotalar:
 
             st.markdown("---")
+
 
             st.markdown(
                 "##### 💾 Kaydedilen Rotalar"
@@ -1049,7 +1564,7 @@ elif st.session_state.kullanici_rolu == "demo":
                 border=True
             ):
 
-                for rota in (
+                for i, rota in enumerate(
                     st.session_state.demo_kayitli_rotalar
                 ):
 
@@ -1057,12 +1572,29 @@ elif st.session_state.kullanici_rolu == "demo":
                         f"📁 **{rota['rota_adi']}**"
                     )
 
+
                     st.caption(
                         f"{len(rota['tesisatlar'])} tesisat"
                     )
 
 
+                    if (
+                        i
+                        <
+                        len(
+                            st.session_state.demo_kayitli_rotalar
+                        ) - 1
+                    ):
+
+                        st.divider()
+
+
+            # -----------------------------------------
+            # EXCEL
+            # -----------------------------------------
+
             tum_kayitlar = []
+
 
             for rota in (
                 st.session_state.demo_kayitli_rotalar
@@ -1076,58 +1608,77 @@ elif st.session_state.kullanici_rolu == "demo":
             if tum_kayitlar:
 
                 excel_df = pd.DataFrame(
+
                     tum_kayitlar,
+
                     columns=[
                         "Rota Adı",
                         "Sıra",
                         "Tesisat"
                     ]
+
                 )
 
 
                 output = BytesIO()
 
 
-                with pd.ExcelWriter(
-                    output,
-                    engine="openpyxl"
-                ) as writer:
+                try:
 
-                    excel_df.to_excel(
-                        writer,
-                        index=False,
-                        sheet_name="Rotalar"
+                    with pd.ExcelWriter(
+                        output,
+                        engine="openpyxl"
+                    ) as writer:
+
+                        excel_df.to_excel(
+                            writer,
+                            index=False,
+                            sheet_name="Rotalar"
+                        )
+
+
+                    excel_data = (
+                        output.getvalue()
                     )
 
 
-                st.download_button(
+                    st.download_button(
 
-                    "📊 TÜM ROTALARI EXCELE AKTAR",
+                        "📊 TÜM ROTALARI EXCELE AKTAR",
 
-                    data=output.getvalue(),
+                        data=
+                        excel_data,
 
-                    file_name="Tum_Rotalar.xlsx",
+                        file_name=
+                        "Tum_Rotalar.xlsx",
 
-                    mime=(
-                        "application/vnd.openxmlformats-officedocument."
-                        "spreadsheetml.sheet"
-                    ),
+                        mime=(
+                            "application/vnd.openxmlformats-officedocument."
+                            "spreadsheetml.sheet"
+                        ),
 
-                    use_container_width=True
+                        use_container_width=True
 
-                )
+                    )
+
+
+                except Exception as e:
+
+                    st.error(
+                        f"Excel oluşturulurken hata oluştu: {e}"
+                    )
 
 
 # =========================================================
 # DEMO1
-# OKUMA ROTALARI
+# HIZLI LEAFLET OKUMA ROTALARI
 # =========================================================
 
-elif st.session_state.kullanici_rolu == "demo1":
-
-    # =====================================================
-    # BAŞLIK
-    # =====================================================
+elif (
+    st.session_state.kullanici_rolu
+    ==
+    "demo1"
+):
 
     col_baslik, col_cikis = st.columns(
         [8, 1]
@@ -1144,14 +1695,12 @@ elif st.session_state.kullanici_rolu == "demo1":
     with col_cikis:
 
         if st.button(
-            "Çıkış Yap"
+            "Çıkış Yap",
+            key="demo1_logout"
         ):
 
             st.session_state.giris_yapildi = False
             st.session_state.kullanici_rolu = None
-
-            st.session_state.demo1_rota = None
-            st.session_state.demo1_secili_tesisat = None
 
             st.rerun()
 
@@ -1167,10 +1716,9 @@ elif st.session_state.kullanici_rolu == "demo1":
         )
 
         st.info(
-            "Dosya adı GitHub'da tam olarak "
-            "'OkumaRotalari.xlsx' olmalı ve "
-            "streamlit_app.py ile aynı klasörde "
-            "bulunmalıdır."
+            "Dosya GitHub'da streamlit_app.py "
+            "ile aynı klasörde ve adı birebir "
+            "OkumaRotalari.xlsx olmalıdır."
         )
 
         st.stop()
@@ -1180,434 +1728,1675 @@ elif st.session_state.kullanici_rolu == "demo1":
 
         st.warning(
             "OkumaRotalari.xlsx içerisinde "
-            "geçerli veri bulunamadı."
+            "geçerli tesisat / rota / koordinat bulunamadı."
         )
 
         st.stop()
 
 
     # =====================================================
-    # ROTALAR
+    # TÜM VERİYİ BİR KEZ HAZIRLA
     # =====================================================
 
-    rotalar = sorted(
+    demo1_data = demo1_verisini_hazirla(
+        okuma_df
+    )
 
-        okuma_df[
-            "Okuma Rotası"
-        ]
-        .dropna()
-        .astype(str)
-        .str.strip()
-        .unique()
-        .tolist()
+
+    # JSON
+    demo1_json = json.dumps(
+
+        demo1_data,
+
+        ensure_ascii=False,
+
+        separators=(
+            ",",
+            ":"
+        )
 
     )
 
 
-    if not rotalar:
-
-        st.warning(
-            "Excelde Okuma Rotası bulunamadı."
-        )
-
-        st.stop()
-
-
-    # =====================================================
-    # SOL PANEL / HARİTA
-    # =====================================================
-
-    sol, harita_alani = st.columns(
-        [2.2, 7.8]
+    # script kapanmasını bozmasın
+    demo1_json = demo1_json.replace(
+        "</",
+        "<\\/"
     )
 
 
     # =====================================================
-    # SOL PANEL
+    # LEAFLET HTML
     # =====================================================
 
-    with sol:
+    demo1_html = """
+<!DOCTYPE html>
 
-        st.markdown(
-            "### 📋 Okuma Rotası"
+<html lang="tr">
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta
+    name="viewport"
+    content="
+        width=device-width,
+        initial-scale=1.0,
+        maximum-scale=1.0,
+        user-scalable=no
+    "
+>
+
+<link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"
+/>
+
+<link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css"
+/>
+
+<link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css"
+/>
+
+
+<style>
+
+:root {
+    --primary:#0f766e;
+    --primary-dark:#0b5a54;
+    --accent:#dc2626;
+    --bg:#f4f6f5;
+    --panel:#ffffff;
+    --border:#e2e8f0;
+    --text:#1e293b;
+    --muted:#64748b;
+}
+
+
+* {
+    box-sizing:border-box;
+}
+
+
+html,
+body {
+    margin:0;
+    padding:0;
+    height:100%;
+    width:100%;
+    overflow:hidden;
+
+    font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        Roboto,
+        Arial,
+        sans-serif;
+
+    background:var(--bg);
+    color:var(--text);
+}
+
+
+#app {
+    position:relative;
+    width:100%;
+    height:800px;
+    overflow:hidden;
+    border-radius:12px;
+    border:1px solid #dfe5e4;
+}
+
+
+#map {
+    position:absolute;
+    inset:0;
+    z-index:1;
+}
+
+
+/* =======================================================
+   ÜST PANEL
+   ======================================================= */
+
+#topbar {
+
+    position:absolute;
+
+    top:0;
+    left:0;
+    right:0;
+
+    z-index:1000;
+
+    padding:10px 12px;
+
+    background:var(--primary);
+
+    color:white;
+
+    box-shadow:
+        0 2px 10px rgba(0,0,0,.2);
+}
+
+
+#topTitle {
+
+    font-size:15px;
+
+    font-weight:700;
+
+    margin-bottom:8px;
+}
+
+
+#routeWrap {
+    position:relative;
+}
+
+
+#routeInput {
+
+    width:100%;
+
+    padding:11px 12px;
+
+    border:none;
+
+    border-radius:8px;
+
+    outline:none;
+
+    font-size:15px;
+
+    color:#1e293b;
+}
+
+
+#routeSuggest {
+
+    display:none;
+
+    position:absolute;
+
+    left:0;
+    right:0;
+
+    top:100%;
+
+    margin-top:4px;
+
+    background:white;
+
+    border-radius:8px;
+
+    box-shadow:
+        0 4px 14px rgba(0,0,0,.25);
+
+    max-height:300px;
+
+    overflow-y:auto;
+
+    z-index:1005;
+}
+
+
+.route-item {
+
+    padding:10px 12px;
+
+    border-bottom:
+        1px solid #edf0ef;
+
+    cursor:pointer;
+
+    color:#1e293b;
+
+    font-size:14px;
+}
+
+
+.route-item:hover {
+    background:#f1f5f4;
+}
+
+
+.route-code {
+
+    font-weight:700;
+
+    color:var(--primary-dark);
+}
+
+
+.route-count {
+
+    font-size:12px;
+
+    color:#64748b;
+
+    margin-left:6px;
+}
+
+
+/* =======================================================
+   BİLGİ PANELİ
+   ======================================================= */
+
+#infoBar {
+
+    position:absolute;
+
+    left:12px;
+    right:12px;
+
+    z-index:999;
+
+    display:none;
+
+    padding:10px 12px;
+
+    background:white;
+
+    border-radius:10px;
+
+    box-shadow:
+        0 2px 10px rgba(0,0,0,.17);
+
+    font-size:13px;
+}
+
+
+#infoBar b {
+    color:var(--primary-dark);
+}
+
+
+/* =======================================================
+   KONUM BUTONU
+   ======================================================= */
+
+#locateBtn {
+
+    position:absolute;
+
+    z-index:999;
+
+    right:12px;
+    bottom:20px;
+
+    width:48px;
+    height:48px;
+
+    border:none;
+
+    border-radius:50%;
+
+    background:white;
+
+    box-shadow:
+        0 2px 10px rgba(0,0,0,.28);
+
+    font-size:21px;
+
+    cursor:pointer;
+}
+
+
+/* =======================================================
+   BOTTOM SHEET
+   ======================================================= */
+
+#bottomSheet {
+
+    display:none;
+
+    position:absolute;
+
+    left:0;
+    right:0;
+    bottom:0;
+
+    z-index:1100;
+
+    background:white;
+
+    border-radius:
+        16px 16px 0 0;
+
+    box-shadow:
+        0 -4px 16px rgba(0,0,0,.22);
+
+    padding:
+        14px 16px 18px;
+}
+
+
+.handle {
+
+    width:42px;
+    height:4px;
+
+    border-radius:4px;
+
+    background:#d6dcda;
+
+    margin:
+        0 auto 12px;
+}
+
+
+#sheetTitle {
+
+    margin:0 0 5px;
+
+    font-size:18px;
+}
+
+
+#sheetMeta {
+
+    font-size:13px;
+
+    color:#64748b;
+
+    margin-bottom:13px;
+}
+
+
+.sheetButtons {
+
+    display:flex;
+
+    gap:8px;
+}
+
+
+.navBtn {
+
+    flex:1;
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:center;
+
+    padding:12px 10px;
+
+    border-radius:10px;
+
+    font-size:14px;
+
+    font-weight:700;
+
+    text-decoration:none;
+
+    border:none;
+
+    cursor:pointer;
+}
+
+
+.primaryBtn {
+
+    background:var(--primary);
+
+    color:white;
+}
+
+
+.secondaryBtn {
+
+    background:#eef2f1;
+
+    color:#1e293b;
+}
+
+
+/* =======================================================
+   MARKER
+   ======================================================= */
+
+.building-dot {
+
+    width:14px;
+
+    height:14px;
+
+    border-radius:50%;
+
+    background:#0f766e;
+
+    border:
+        2px solid white;
+
+    box-shadow:
+        0 1px 4px rgba(0,0,0,.55);
+}
+
+
+/* =======================================================
+   LOADING
+   ======================================================= */
+
+#loading {
+
+    position:absolute;
+
+    inset:0;
+
+    z-index:2000;
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:center;
+
+    flex-direction:column;
+
+    gap:10px;
+
+    background:#f4f6f5;
+}
+
+
+.spinner {
+
+    width:38px;
+
+    height:38px;
+
+    border:
+        4px solid #d4dfdc;
+
+    border-top-color:
+        var(--primary);
+
+    border-radius:50%;
+
+    animation:
+        spin .75s linear infinite;
+}
+
+
+@keyframes spin {
+
+    to {
+        transform:
+            rotate(360deg);
+    }
+
+}
+
+
+#loadingText {
+
+    color:#64748b;
+
+    font-size:14px;
+}
+
+
+/* =======================================================
+   MOBİL
+   ======================================================= */
+
+@media(max-width:600px) {
+
+    #app {
+        height:780px;
+        border-radius:0;
+    }
+
+}
+
+</style>
+
+</head>
+
+
+<body>
+
+
+<div id="app">
+
+
+    <div id="loading">
+
+        <div class="spinner"></div>
+
+        <div id="loadingText">
+            Okuma rotaları hazırlanıyor...
+        </div>
+
+    </div>
+
+
+    <div id="map"></div>
+
+
+    <div id="topbar">
+
+        <div id="topTitle">
+            📍 Okuma Rotası Seç
+        </div>
+
+
+        <div id="routeWrap">
+
+            <input
+
+                id="routeInput"
+
+                type="text"
+
+                autocomplete="off"
+
+                placeholder="Okuma rotası yazın veya seçin..."
+
+            >
+
+
+            <div id="routeSuggest"></div>
+
+        </div>
+
+    </div>
+
+
+    <div id="infoBar"></div>
+
+
+    <button
+
+        id="locateBtn"
+
+        title="Konumum"
+
+        onclick="locateMe()"
+
+    >
+        🧭
+    </button>
+
+
+    <div id="bottomSheet">
+
+        <div class="handle"></div>
+
+
+        <h3 id="sheetTitle">
+            -
+        </h3>
+
+
+        <div id="sheetMeta">
+            -
+        </div>
+
+
+        <div class="sheetButtons">
+
+
+            <a
+
+                id="navBtn"
+
+                class="
+                    navBtn
+                    primaryBtn
+                "
+
+                target="_blank"
+
+                href="#"
+
+            >
+
+                🚗 Yol Tarifi Al
+
+            </a>
+
+
+            <button
+
+                class="
+                    navBtn
+                    secondaryBtn
+                "
+
+                onclick="closeSheet()"
+
+            >
+
+                Kapat
+
+            </button>
+
+
+        </div>
+
+    </div>
+
+
+</div>
+
+
+<script
+    src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js">
+</script>
+
+
+<script
+    src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js">
+</script>
+
+
+<script>
+
+
+/* =======================================================
+   VERİ
+   ======================================================= */
+
+const APP_DATA = __DEMO1_JSON__;
+
+
+const routeCodes =
+    Object.keys(
+        APP_DATA
+    ).sort(
+        (a,b) =>
+        a.localeCompare(
+            b,
+            'tr',
+            {
+                numeric:true
+            }
         )
+    );
+
+
+let map = null;
+
+let selectedAreaLayer = null;
+
+let buildingClusterLayer = null;
+
+let userMarker = null;
+
+
+/* =======================================================
+   HARİTA BAŞLAT
+   ======================================================= */
+
+function initMap() {
+
+
+    let firstLat = 38.5;
+
+    let firstLon = 43.4;
+
+
+    if (
+        routeCodes.length > 0
+    ) {
+
+        const first =
+            APP_DATA[
+                routeCodes[0]
+            ];
+
+
+        firstLat =
+            first.clat;
+
+
+        firstLon =
+            first.clon;
+
+    }
+
+
+    map = L.map(
+        'map',
+        {
+            zoomControl:true,
+            attributionControl:true
+        }
+    ).setView(
+        [
+            firstLat,
+            firstLon
+        ],
+        12
+    );
+
+
+    /* -------------------------------------------------------
+       HARİTA KATMANLARI
+       ------------------------------------------------------- */
+
+
+    const osm =
+        L.tileLayer(
+
+            'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+
+            {
+                maxZoom:21,
+
+                attribution:
+                '&copy; OpenStreetMap'
+            }
+
+        );
+
+
+    const esri =
+        L.tileLayer(
+
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+
+            {
+                maxZoom:20,
+
+                attribution:
+                'Tiles &copy; Esri'
+            }
+
+        );
+
+
+    osm.addTo(
+        map
+    );
+
+
+    L.control.layers(
+
+        {
+
+            '🗺️ Yol Haritası':
+            osm,
+
+            '🛰️ Uydu':
+            esri
+
+        },
+
+        null,
+
+        {
+
+            position:
+            'bottomleft',
+
+            collapsed:
+            true
+
+        }
+
+    ).addTo(
+        map
+    );
+
+
+    buildRouteSearch();
+
+
+    document.getElementById(
+        'loading'
+    ).style.display =
+        'none';
+
+
+    if (
+        routeCodes.length
+        >
+        0
+    ) {
+
+        selectRoute(
+            routeCodes[0]
+        );
+
+    }
+
+}
+
+
+/* =======================================================
+   ROTA ARAMA
+   ======================================================= */
+
+function buildRouteSearch() {
+
+
+    const input =
+        document.getElementById(
+            'routeInput'
+        );
+
+
+    const box =
+        document.getElementById(
+            'routeSuggest'
+        );
+
+
+    function render(
+        list
+    ) {
 
 
         if (
-            st.session_state.demo1_rota
-            not in rotalar
-        ):
+            !list.length
+        ) {
 
-            st.session_state.demo1_rota = (
-                rotalar[0]
+            box.innerHTML =
+                '<div class="route-item">Eşleşme bulunamadı</div>';
+
+            box.style.display =
+                'block';
+
+            return;
+
+        }
+
+
+        box.innerHTML =
+            list
+            .slice(
+                0,
+                80
             )
+            .map(
+                kod => {
+
+                    const rec =
+                        APP_DATA[
+                            kod
+                        ];
 
 
-        secilen_rota = st.selectbox(
-
-            "Okuma Rotası",
-
-            options=rotalar,
-
-            index=rotalar.index(
-                st.session_state.demo1_rota
-            ),
-
-            label_visibility="collapsed"
-
-        )
+                    const safeKod =
+                        kod
+                        .replace(
+                            /\\/g,
+                            '\\\\'
+                        )
+                        .replace(
+                            /'/g,
+                            "\\'"
+                        );
 
 
-        if (
-            secilen_rota
-            !=
-            st.session_state.demo1_rota
-        ):
+                    return `
 
-            st.session_state.demo1_rota = (
-                secilen_rota
+                    <div
+
+                        class="route-item"
+
+                        onclick="
+                            selectRoute(
+                                '${safeKod}'
+                            )
+                        "
+
+                    >
+
+                        <span
+                            class="route-code"
+                        >
+                            ${kod}
+                        </span>
+
+                        <span
+                            class="route-count"
+                        >
+                            (${rec.n} tesisat)
+                        </span>
+
+                    </div>
+
+                    `;
+
+                }
             )
-
-            st.session_state.demo1_secili_tesisat = None
-
-            st.rerun()
-
-
-        # =================================================
-        # SEÇİLEN ROTA
-        # =================================================
-
-        rota_df = okuma_df[
-            okuma_df["Okuma Rotası"]
-            ==
-            secilen_rota
-        ].copy()
+            .join(
+                ''
+            );
 
 
-        st.markdown("---")
+        box.style.display =
+            'block';
+
+    }
 
 
-        st.metric(
-            "📍 Tesisat Sayısı",
-            len(rota_df)
-        )
+    input.addEventListener(
+        'focus',
+        () => {
+
+            const q =
+                input.value
+                .trim()
+                .toLocaleUpperCase(
+                    'tr-TR'
+                );
 
 
-        st.markdown("---")
+            if (
+                !q
+            ) {
 
+                render(
+                    routeCodes
+                );
 
-        st.markdown(
-            "### 📌 Tesisatlar"
-        )
+            }
+            else {
 
+                render(
 
-        # =================================================
-        # TESİSAT LİSTESİ
-        # =================================================
-
-        with st.container(
-            height=470,
-            border=True
-        ):
-
-            for sıra, (_, row) in enumerate(
-                rota_df.iterrows(),
-                start=1
-            ):
-
-                t_no = str(
-                    row["Tesisat"]
-                )
-
-
-                if st.button(
-
-                    f"📍 {sıra}. {t_no}",
-
-                    key=(
-                        f"demo1_tesisat_"
-                        f"{sıra}_{t_no}"
-                    ),
-
-                    use_container_width=True
-
-                ):
-
-                    st.session_state.demo1_secili_tesisat = (
-                        t_no
+                    routeCodes.filter(
+                        x =>
+                        x
+                        .toLocaleUpperCase(
+                            'tr-TR'
+                        )
+                        .includes(
+                            q
+                        )
                     )
 
-                    st.rerun()
+                );
+
+            }
+
+        }
+    );
 
 
-    # =====================================================
-    # HARİTA
-    # =====================================================
+    input.addEventListener(
+        'input',
+        () => {
 
-    with harita_alani:
-
-        if rota_df.empty:
-
-            st.warning(
-                "Bu rotada tesisat bulunamadı."
-            )
-
-        else:
-
-            # =================================================
-            # MERKEZ
-            # =================================================
-
-            merkez_lat = rota_df[
-                "Enlem"
-            ].mean()
-
-            merkez_lon = rota_df[
-                "Boylam"
-            ].mean()
+            const q =
+                input.value
+                .trim()
+                .toLocaleUpperCase(
+                    'tr-TR'
+                );
 
 
-            m_rota = folium.Map(
+            const filtered =
+                routeCodes.filter(
 
-                location=[
-                    merkez_lat,
-                    merkez_lon
-                ],
+                    x =>
+                    x
+                    .toLocaleUpperCase(
+                        'tr-TR'
+                    )
+                    .includes(
+                        q
+                    )
 
-                zoom_start=13,
-
-                control_scale=True
-
-            )
+                );
 
 
-            # =================================================
-            # MARKERLAR
-            # =================================================
+            render(
+                filtered
+            );
 
-            for _, row in rota_df.iterrows():
+        }
+    );
 
-                t_no = str(
-                    row["Tesisat"]
+
+    document.addEventListener(
+        'click',
+        event => {
+
+            const wrap =
+                document.getElementById(
+                    'routeWrap'
+                );
+
+
+            if (
+                !wrap.contains(
+                    event.target
                 )
+            ) {
 
-                lat = float(
-                    row["Enlem"]
-                )
+                box.style.display =
+                    'none';
 
-                lon = float(
-                    row["Boylam"]
-                )
+            }
 
+        }
+    );
 
-                gmaps_url = (
-                    "https://www.google.com/maps/dir/?api=1"
-                    f"&destination={lat},{lon}"
-                )
+}
 
 
-                popup_html = f"""
-                <div style="
-                    font-family:Arial,sans-serif;
-                    min-width:190px;
-                    text-align:center;
-                ">
+/* =======================================================
+   ROTA SEÇ
+   ======================================================= */
 
-                    <div style="
-                        font-size:12px;
-                        color:#64748b;
-                        margin-bottom:5px;
-                    ">
-
-                        TESİSAT
-
-                    </div>
-
-                    <div style="
-                        font-size:20px;
-                        font-weight:bold;
-                        margin-bottom:8px;
-                    ">
-
-                        {t_no}
-
-                    </div>
-
-                    <div style="
-                        font-size:12px;
-                        color:#64748b;
-                        margin-bottom:10px;
-                    ">
-
-                        Okuma Rotası:<br>
-
-                        <b>{secilen_rota}</b>
-
-                    </div>
-
-                    <a href="{gmaps_url}"
-                       target="_blank"
-                       style="
-                       background:#2563eb;
-                       color:white;
-                       padding:8px 14px;
-                       text-decoration:none;
-                       border-radius:6px;
-                       display:inline-block;
-                       font-weight:bold;
-                       font-size:13px;
-                       ">
-
-                        🚗 Yol Tarifi Al
-
-                    </a>
-
-                </div>
-                """
+function selectRoute(
+    kod
+) {
 
 
-                # =================================================
-                # SEÇİLİ MARKER
-                # =================================================
-
-                if (
-                    st.session_state.demo1_secili_tesisat
-                    ==
-                    t_no
-                ):
-
-                    marker_color = "red"
-
-                else:
-
-                    marker_color = "blue"
+    const rec =
+        APP_DATA[
+            kod
+        ];
 
 
-                folium.Marker(
+    if (
+        !rec
+    ) {
+        return;
+    }
 
-                    location=[
+
+    document.getElementById(
+        'routeInput'
+    ).value =
+        kod;
+
+
+    document.getElementById(
+        'routeSuggest'
+    ).style.display =
+        'none';
+
+
+    closeSheet();
+
+
+    /* -------------------------------------------------------
+       ESKİ ALANI SİL
+       ------------------------------------------------------- */
+
+    if (
+        selectedAreaLayer
+    ) {
+
+        map.removeLayer(
+            selectedAreaLayer
+        );
+
+        selectedAreaLayer =
+            null;
+
+    }
+
+
+    /* -------------------------------------------------------
+       ESKİ MARKERLARI SİL
+       ------------------------------------------------------- */
+
+    if (
+        buildingClusterLayer
+    ) {
+
+        map.removeLayer(
+            buildingClusterLayer
+        );
+
+        buildingClusterLayer =
+            null;
+
+    }
+
+
+    /* -------------------------------------------------------
+       KIRMIZI ALAN / ÇİZGİ
+       ------------------------------------------------------- */
+
+    if (
+        rec.polygon
+        &&
+        rec.polygon.length >= 3
+    ) {
+
+        selectedAreaLayer =
+            L.polygon(
+
+                rec.polygon,
+
+                {
+
+                    color:
+                    '#dc2626',
+
+                    weight:
+                    4,
+
+                    opacity:
+                    0.95,
+
+                    fillColor:
+                    '#dc2626',
+
+                    fillOpacity:
+                    0.08
+
+                }
+
+            ).addTo(
+                map
+            );
+
+    }
+
+
+    else if (
+        rec.polygon
+        &&
+        rec.polygon.length == 2
+    ) {
+
+        selectedAreaLayer =
+            L.polyline(
+
+                rec.polygon,
+
+                {
+
+                    color:
+                    '#dc2626',
+
+                    weight:
+                    4,
+
+                    opacity:
+                    0.95
+
+                }
+
+            ).addTo(
+                map
+            );
+
+    }
+
+
+    /* -------------------------------------------------------
+       MARKER CLUSTER
+       ------------------------------------------------------- */
+
+    buildingClusterLayer =
+        L.markerClusterGroup({
+
+            maxClusterRadius:
+            45,
+
+            disableClusteringAtZoom:
+            18,
+
+            spiderfyOnMaxZoom:
+            true,
+
+            showCoverageOnHover:
+            false
+
+        });
+
+
+    rec.buildings.forEach(
+        bina => {
+
+
+            const marker =
+                L.marker(
+
+                    [
+                        bina.lat,
+                        bina.lon
+                    ],
+
+                    {
+
+                        icon:
+                        buildingIcon()
+
+                    }
+
+                );
+
+
+            marker.bindTooltip(
+                'Tesisat: '
+                +
+                bina.tesisat
+            );
+
+
+            marker.on(
+                'click',
+                () => {
+
+                    openSheet(
+                        bina,
+                        kod
+                    );
+
+                }
+            );
+
+
+            buildingClusterLayer.addLayer(
+                marker
+            );
+
+        }
+    );
+
+
+    map.addLayer(
+        buildingClusterLayer
+    );
+
+
+    /* -------------------------------------------------------
+       HARİTAYI ALANA UYDUR
+       ------------------------------------------------------- */
+
+    if (
+        selectedAreaLayer
+    ) {
+
+        const bounds =
+            selectedAreaLayer.getBounds();
+
+
+        map.fitBounds(
+
+            bounds,
+
+            {
+
+                padding:
+                [45,45],
+
+                maxZoom:
+                17
+
+            }
+
+        );
+
+    }
+
+
+    else if (
+        buildingClusterLayer.getLayers().length
+        >
+        0
+    ) {
+
+        const bounds =
+            buildingClusterLayer.getBounds();
+
+
+        map.fitBounds(
+
+            bounds,
+
+            {
+
+                padding:
+                [45,45],
+
+                maxZoom:
+                17
+
+            }
+
+        );
+
+    }
+
+
+    else {
+
+        map.setView(
+            [
+                rec.clat,
+                rec.clon
+            ],
+            15
+        );
+
+    }
+
+
+    /* -------------------------------------------------------
+       BİLGİ
+       ------------------------------------------------------- */
+
+    showInfo(
+
+        '<b>Okuma Rotası:</b> '
+        +
+        kod
+        +
+        ' &nbsp; | &nbsp; '
+        +
+        '<b>'
+        +
+        rec.n
+        +
+        '</b> tesisat'
+
+    );
+
+}
+
+
+/* =======================================================
+   MARKER İKONU
+   ======================================================= */
+
+function buildingIcon() {
+
+
+    return L.divIcon({
+
+        className:
+        '',
+
+        html:
+        '<div class="building-dot"></div>',
+
+        iconSize:
+        [14,14],
+
+        iconAnchor:
+        [7,7]
+
+    });
+
+}
+
+
+/* =======================================================
+   BİLGİ
+   ======================================================= */
+
+function showInfo(
+    html
+) {
+
+
+    const bar =
+        document.getElementById(
+            'infoBar'
+        );
+
+
+    bar.innerHTML =
+        html;
+
+
+    bar.style.display =
+        'block';
+
+
+    positionInfo();
+
+}
+
+
+function positionInfo() {
+
+
+    const top =
+        document.getElementById(
+            'topbar'
+        ).offsetHeight;
+
+
+    document.getElementById(
+        'infoBar'
+    ).style.top =
+        (top + 8)
+        +
+        'px';
+
+}
+
+
+window.addEventListener(
+    'resize',
+    positionInfo
+);
+
+
+/* =======================================================
+   TESİSAT PANELİ
+   ======================================================= */
+
+function openSheet(
+    bina,
+    rota
+) {
+
+
+    document.getElementById(
+        'sheetTitle'
+    ).textContent =
+        'Tesisat: '
+        +
+        bina.tesisat;
+
+
+    document.getElementById(
+        'sheetMeta'
+    ).textContent =
+        'Okuma Rotası: '
+        +
+        rota;
+
+
+    const url =
+        'https://www.google.com/maps/dir/?api=1'
+        +
+        '&destination='
+        +
+        bina.lat
+        +
+        ','
+        +
+        bina.lon
+        +
+        '&travelmode=driving';
+
+
+    document.getElementById(
+        'navBtn'
+    ).href =
+        url;
+
+
+    document.getElementById(
+        'bottomSheet'
+    ).style.display =
+        'block';
+
+}
+
+
+function closeSheet() {
+
+
+    document.getElementById(
+        'bottomSheet'
+    ).style.display =
+        'none';
+
+}
+
+
+/* =======================================================
+   KONUMUM
+   ======================================================= */
+
+function locateMe() {
+
+
+    if (
+        !navigator.geolocation
+    ) {
+
+        alert(
+            'Tarayıcı konum servisini desteklemiyor.'
+        );
+
+        return;
+
+    }
+
+
+    navigator.geolocation.getCurrentPosition(
+
+        pos => {
+
+
+            const lat =
+                pos.coords.latitude;
+
+
+            const lon =
+                pos.coords.longitude;
+
+
+            if (
+                userMarker
+            ) {
+
+                map.removeLayer(
+                    userMarker
+                );
+
+            }
+
+
+            userMarker =
+                L.circleMarker(
+
+                    [
                         lat,
                         lon
                     ],
 
-                    popup=folium.Popup(
-                        popup_html,
-                        max_width=280
-                    ),
+                    {
 
-                    tooltip=(
-                        f"Tesisat: {t_no}"
-                    ),
+                        radius:
+                        8,
 
-                    icon=folium.Icon(
-                        color=marker_color,
-                        icon="home",
-                        prefix="fa"
-                    )
+                        color:
+                        '#2563eb',
 
-                ).add_to(m_rota)
+                        fillColor:
+                        '#3b82f6',
 
+                        fillOpacity:
+                        0.95,
 
-            # =================================================
-            # HARİTA
-            # =================================================
+                        weight:
+                        3
 
-            map_data = st_folium(
+                    }
 
-                m_rota,
-
-                use_container_width=True,
-
-                height=700,
-
-                returned_objects=[
-                    "last_object_clicked"
-                ]
-
-            )
+                ).addTo(
+                    map
+                );
 
 
-            # =================================================
-            # HARİTA TIKLAMA
-            # =================================================
+            map.setView(
+                [
+                    lat,
+                    lon
+                ],
+                17
+            );
 
-            if map_data:
-
-                clicked = map_data.get(
-                    "last_object_clicked"
-                )
-
-
-                if clicked:
-
-                    click_lat = clicked.get(
-                        "lat"
-                    )
-
-                    click_lon = clicked.get(
-                        "lng"
-                    )
+        },
 
 
-                    if (
-                        click_lat is not None
-                        and
-                        click_lon is not None
-                    ):
+        err => {
 
-                        en_yakin = float("inf")
-                        secilen = None
+            alert(
+                'Konum alınamadı: '
+                +
+                err.message
+            );
 
-
-                        for _, row in (
-                            rota_df.iterrows()
-                        ):
-
-                            lat = float(
-                                row["Enlem"]
-                            )
-
-                            lon = float(
-                                row["Boylam"]
-                            )
+        },
 
 
-                            mesafe = (
+        {
 
-                                abs(
-                                    lat
-                                    -
-                                    click_lat
-                                )
+            enableHighAccuracy:
+            true,
 
-                                +
+            timeout:
+            10000
 
-                                abs(
-                                    lon
-                                    -
-                                    click_lon
-                                )
+        }
 
-                            )
+    );
+
+}
 
 
-                            if mesafe < en_yakin:
+/* =======================================================
+   START
+   ======================================================= */
 
-                                en_yakin = mesafe
-
-                                secilen = str(
-                                    row["Tesisat"]
-                                )
+initMap();
 
 
-                        if (
-                            secilen is not None
-                            and
-                            en_yakin < 0.00001
-                        ):
+</script>
 
-                            st.session_state.demo1_secili_tesisat = (
-                                secilen
-                            )
 
-                            st.rerun()
+</body>
+
+</html>
+"""
+
+
+    # JSON'u HTML içine koy
+    demo1_html = demo1_html.replace(
+        "__DEMO1_JSON__",
+        demo1_json
+    )
+
+
+    # =====================================================
+    # COMPONENT
+    # =====================================================
+
+    components.html(
+
+        demo1_html,
+
+        height=820,
+
+        scrolling=False
+
+    )
