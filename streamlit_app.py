@@ -44,9 +44,8 @@ if "hata_mesaji" not in st.session_state:
 if "demo_yuklenenler" not in st.session_state:
     st.session_state.demo_yuklenenler = [] # Haritada olanlar
 if "demo_secilenler" not in st.session_state:
-    st.session_state.demo_secilenler = [] # Sağ panelde birikenler (seçilenler)
+    st.session_state.demo_secilenler = [] # Sol panelde birikenler (havuz)
 
-# Stil düzenlemeleri (PC uyumlu geniş alan)
 st.markdown("""
     <style>
     .block-container {
@@ -163,7 +162,7 @@ elif st.session_state.kullanici_rolu == "admin":
 
     st_folium(m, use_container_width=True, height=500)
 
-# --- 2. DEMO / ROTA PLANLAMA PANELİ (PC UYUMLU İKİ SÜTUN) ---
+# --- 2. DEMO / ROTA PLANLAMA PANELİ (YENİ DÜZEN: SOL KONTROL, SAĞ HARİTA) ---
 elif st.session_state.kullanici_rolu == "demo":
     col_baslik, col_cikis = st.columns([8, 1])
     with col_baslik:
@@ -174,12 +173,12 @@ elif st.session_state.kullanici_rolu == "demo":
             st.session_state.kullanici_rolu = None
             st.rerun()
 
-    # Masaüstü için yan yana iki ana sütun (Sol: Harita, Sağ: Yönetim Paneli)
-    col_sol, col_sag = st.columns([7, 3])
+    # Sol ve Sağ Sütunlar (Sol: Yükleme ve Havuz, Sağ: Harita)
+    col_sol, col_sag = st.columns([3, 7])
 
-    with col_sag:
+    with col_sol:
         st.markdown("#### 📥 Toplu Tesisat Yükleme")
-        toplu_input = st.text_area("Alt alta tesisat numaralarını girin:", height=150, placeholder="1001\n1002\n1003...")
+        toplu_input = st.text_area("Alt alta tesisat numaralarını girin:", height=120, placeholder="1001\n1002\n1003...")
         
         if st.button("Tesisatları Haritaya Yükle", use_container_width=True):
             if df is None:
@@ -188,8 +187,9 @@ elif st.session_state.kullanici_rolu == "demo":
                 girilen_liste = [t.strip() for t in toplu_input.split("\n") if t.strip()]
                 bulunanlar = []
                 for t_no in girilen_liste:
-                    # Daha önce haritada veya seçilenlerde yoksa ekle
-                    if t_no not in st.session_state.demo_yuklenenler and t_no not in st.session_state.demo_secilenler:
+                    # Zaten haritada veya havuzda yoksa ekle
+                    eksik_mi = not any(item["tesisat"] == t_no for item in st.session_state.demo_yuklenenler + st.session_state.demo_secilenler)
+                    if eksik_mi:
                         match = df[df["Tesisat"] == t_no]
                         if not match.empty:
                             row = match.iloc[0]
@@ -211,18 +211,17 @@ elif st.session_state.kullanici_rolu == "demo":
                 st.rerun()
 
         st.markdown("---")
-        st.markdown("#### 📌 Rota Listesi (Sağ Panel)")
+        st.markdown("#### 📌 Rota Havuzu (Sol Panel)")
         
         rota_adi = st.text_input("Rota Adı", value="Rota 1")
 
         if st.session_state.demo_secilenler:
-            st.info(f"Seçilen Toplam Tesisat: {len(st.session_state.demo_secilenler)}")
+            st.info(f"Havuzdaki Toplam Tesisat: {len(st.session_state.demo_secilenler)}")
+            st.markdown("<small>Havuzdan çıkarmak ve haritaya döndürmek için tıklayın:</small>", unsafe_allow_html=True)
             
-            # Listelenen tesisatlar (tıklandığında haritaya geri dönmesi için butonlar)
-            st.markdown("<small>Çıkarmak istediğiniz tesisata tıklayın:</small>", unsafe_allow_html=True)
+            # Havuzdaki elemanları listele (tıklandığında haritaya geri döner)
             for idx, item in enumerate(st.session_state.demo_secilenler):
-                if st.button(f"❌ {item['tesisat']}", key=f"cikar_{idx}", use_container_width=True):
-                    # Seçilenlerden çıkar, haritaya geri ekle
+                if st.button(f"↩️ {item['tesisat']} (Çıkar)", key=f"cikar_{idx}", use_container_width=True):
                     st.session_state.demo_secilenler.pop(idx)
                     st.session_state.demo_yuklenenler.append(item)
                     st.rerun()
@@ -243,17 +242,18 @@ elif st.session_state.kullanici_rolu == "demo":
                 use_container_width=True
             )
         else:
-            st.markdown("_Henüz sağ panele tesisat seçilmedi. Haritadaki noktalara tıklayın._")
+            st.markdown("_Henüz havuzda tesisat yok. Haritadaki noktalara tıklayarak buraya alabilirsiniz._")
 
+        st.markdown("---")
         if st.button("Tümünü Temizle", use_container_width=True):
             st.session_state.demo_yuklenenler = []
             st.session_state.demo_secilenler = []
             st.rerun()
 
-    with col_sol:
-        st.markdown("#### Harita Görünümü (Haritadaki noktaya tıklayarak sağ panele alabilirsiniz)")
+    with col_sag:
+        st.markdown("#### Harita Görünümü (Haritadaki noktalara tıklayarak sol havuza alabilirsiniz)")
         
-        # Harita merkezini belirleme (ilk yüklenen noktanın merkezi veya Van)
+        # Harita merkezini belirleme
         harita_merkez = [38.5, 43.4]
         if st.session_state.demo_yuklenenler:
             harita_merkez = [st.session_state.demo_yuklenenler[0]["lat"], st.session_state.demo_yuklenenler[0]["lon"]]
@@ -262,35 +262,60 @@ elif st.session_state.kullanici_rolu == "demo":
 
         m_demo = folium.Map(location=harita_merkez, zoom_start=13)
 
-        # Haritada bekleyen tesisatları çiz
+        # Haritada bekleyen tesisatları çiz ve tıklanabilirlik ekle
         for item in st.session_state.demo_yuklenenler:
             t_no = item["tesisat"]
-            # Folium popup içine HTML ve buton yerleştiriyoruz
-            popup_content = f"""
-            <div style="font-family:sans-serif; text-align:center;">
+            
+            # Folium Marker tıklama sorunsuz çalışması için butonlu popup
+            popup_html = f"""
+            <div style="font-family:sans-serif; text-align:center; min-width:150px;">
                 <b>Tesisat: {t_no}</b><br><br>
-                <b>Bu tesisatı sağ panele almak için sayfayı yenileyin veya listeden seçin.</b>
+                <form action="" method="get">
+                    <button name="secilen_t" value="{t_no}" 
+                            style="background:#0f766e; color:white; border:none; padding:6px 12px; border-radius:4px; cursor:pointer; font-weight:bold;">
+                        Havuza Ekle
+                    </button>
+                </form>
             </div>
             """
+            
             folium.Marker(
                 location=[item["lat"], item["lon"]],
-                popup=folium.Popup(popup_content, max_width=250),
-                tooltip=f"Tesisat: {t_no} (Sağ panele atmak için tıklayın)",
+                popup=folium.Popup(popup_html, max_width=250),
+                tooltip=f"Tesisat: {t_no} (Tıkla)",
                 icon=folium.Icon(color="green", icon="info-sign")
             ).add_to(m_demo)
 
-        # Haritadan tıklama yakalama
+        # Harita verisini al
         map_data = st_folium(m_demo, use_container_width=True, height=600)
 
-        # Eğer kullanıcı harita üzerinde bir marker'a tıkladıysa
+        # 1. Yöntem: Popup içindeki form butonundan gelen değer kontrolü
+        query_params = st.query_params
+        if "secilen_t" in query_params:
+            secilen_no = query_params["secilen_t"]
+            # Query params string veya liste dönebilir
+            if isinstance(secilen_no, list):
+                secilen_no = secilen_no[0]
+            
+            # Bul ve taşı
+            for item in list(st.session_state.demo_yuklenenler):
+                if item["tesisat"] == secilen_no:
+                    st.session_state.demo_yuklenenler.remove(item)
+                    if item not in st.session_state.demo_secilenler:
+                        st.session_state.demo_secilenler.append(item)
+                    # Parametreyi temizle ve sayfayı tazele
+                    st.query_params.clear()
+                    st.rerun()
+
+        # 2. Yöntem: Harita üzerine direkt tıklama (koordinat bazlı esnek yakalama)
         if map_data and map_data.get("last_clicked"):
             click_lat = map_data["last_clicked"]["lat"]
             click_lon = map_data["last_clicked"]["lng"]
             
-            # Tıklanan koordinata en yakın haritadaki yüklenmiş tesisatı bul
-            for item in st.session_state.demo_yuklenenler:
-                # Küçük bir tolerans ile eşleşme kontrolü
-                if abs(item["lat"] - click_lat) < 0.0001 and abs(item["lon"] - click_lon) < 0.0001:
+            for item in list(st.session_state.demo_yuklenenler):
+                # 0.0005 derece yaklaşık 50 metre tolerans sağlar
+                if abs(item["lat"] - click_lat) < 0.0005 and abs(item["lon"] - click_lon) < 0.0005:
                     st.session_state.demo_yuklenenler.remove(item)
-                    st.session_state.demo_secilenler.append(item)
+                    if item not in st.session_state.demo_secilenler:
+                        st.session_state.demo_secilenler.append(item)
                     st.rerun()
