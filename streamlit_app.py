@@ -78,7 +78,7 @@ if "kullanici_rolu" not in st.session_state:
 
 
 # =========================================================
-# ADMIN HAFIZASI
+# ADMIN SESSION
 # =========================================================
 
 if "son_lat" not in st.session_state:
@@ -98,7 +98,7 @@ if "hata_mesaji" not in st.session_state:
 
 
 # =========================================================
-# DEMO HAFIZASI
+# DEMO SESSION
 # =========================================================
 
 # Haritada bulunan tesisatlar
@@ -106,9 +106,14 @@ if "demo_yuklenenler" not in st.session_state:
     st.session_state.demo_yuklenenler = []
 
 
-# Rota havuzundaki tesisatlar
+# Aktif rota havuzu
 if "demo_secilenler" not in st.session_state:
     st.session_state.demo_secilenler = []
+
+
+# Kaydedilmiş rotalar
+if "demo_kayitli_rotalar" not in st.session_state:
+    st.session_state.demo_kayitli_rotalar = []
 
 
 # Rota adı
@@ -136,13 +141,7 @@ st.markdown(
         border-radius: 8px;
         padding: 10px;
         background-color: #f8f9fa;
-        min-height: 200px;
-    }
-
-    .havuz-baslik {
-        font-weight: bold;
-        font-size: 15px;
-        margin-bottom: 8px;
+        min-height: 250px;
     }
 
     .tesisat-satir {
@@ -150,6 +149,14 @@ st.markdown(
         border: 1px solid #dddddd;
         border-radius: 5px;
         padding: 7px;
+        margin-bottom: 5px;
+    }
+
+    .kayitli-rota {
+        background: #f8f9fa;
+        border: 1px solid #dddddd;
+        border-radius: 6px;
+        padding: 8px;
         margin-bottom: 5px;
     }
 
@@ -187,15 +194,8 @@ if not st.session_state.giris_yapildi:
 
         if giris:
 
-            # -------------------------------------------------
             # ADMIN
-            # -------------------------------------------------
-
-            if (
-                kadi == "admin"
-                and
-                sifre == "admin"
-            ):
+            if kadi == "admin" and sifre == "admin":
 
                 st.session_state.giris_yapildi = True
                 st.session_state.kullanici_rolu = "admin"
@@ -203,21 +203,15 @@ if not st.session_state.giris_yapildi:
                 st.rerun()
 
 
-            # -------------------------------------------------
             # DEMO
-            # -------------------------------------------------
-
-            elif (
-                kadi == "demo"
-                and
-                sifre == "demo"
-            ):
+            elif kadi == "demo" and sifre == "demo":
 
                 st.session_state.giris_yapildi = True
                 st.session_state.kullanici_rolu = "demo"
 
                 st.session_state.demo_yuklenenler = []
                 st.session_state.demo_secilenler = []
+                st.session_state.demo_kayitli_rotalar = []
 
                 st.rerun()
 
@@ -274,10 +268,6 @@ elif st.session_state.kullanici_rolu == "admin":
             use_container_width=True
         )
 
-
-    # =====================================================
-    # ARAMA İŞLEMİ
-    # =====================================================
 
     if ara_submitted:
 
@@ -379,7 +369,7 @@ elif st.session_state.kullanici_rolu == "admin":
 
 
     # =====================================================
-    # MESAJ
+    # ADMIN MESAJ
     # =====================================================
 
     if st.session_state.hata_mesaji:
@@ -510,6 +500,7 @@ elif st.session_state.kullanici_rolu == "demo":
 
             st.session_state.demo_yuklenenler = []
             st.session_state.demo_secilenler = []
+            st.session_state.demo_kayitli_rotalar = []
 
             st.rerun()
 
@@ -524,7 +515,7 @@ elif st.session_state.kullanici_rolu == "demo":
 
 
     # =====================================================
-    # SOL PANEL
+    # SOL PANEL - TOPLU TESİSAT
     # =====================================================
 
     with sol:
@@ -600,6 +591,24 @@ elif st.session_state.kullanici_rolu == "demo":
 
 
                     if mevcut:
+                        continue
+
+
+                    # Daha önce kaydedilmiş rotalarda var mı?
+                    kayitli_mi = False
+
+                    for rota in st.session_state.demo_kayitli_rotalar:
+
+                        if any(
+                            x["Tesisat"] == t_no
+                            for x in rota["tesisatlar"]
+                        ):
+
+                            kayitli_mi = True
+                            break
+
+
+                    if kayitli_mi:
                         continue
 
 
@@ -715,7 +724,7 @@ elif st.session_state.kullanici_rolu == "demo":
 
 
         st.metric(
-            "📌 Rota Havuzunda",
+            "📌 Aktif Rota",
             len(
                 st.session_state.demo_secilenler
             )
@@ -747,8 +756,7 @@ elif st.session_state.kullanici_rolu == "demo":
         )
 
         st.caption(
-            "Yeşil noktaya tıklayın. "
-            "Tesisat rota havuzuna alınacaktır."
+            "Yeşil noktaya tıklayın."
         )
 
 
@@ -878,7 +886,7 @@ elif st.session_state.kullanici_rolu == "demo":
 
 
         # -------------------------------------------------
-        # HARİTAYI GÖSTER
+        # HARİTA GÖSTER
         # -------------------------------------------------
 
         map_data = st_folium(
@@ -897,7 +905,7 @@ elif st.session_state.kullanici_rolu == "demo":
 
 
         # =================================================
-        # MARKER TIKLAMA
+        # HARİTA MARKER TIKLAMA
         # =================================================
 
         if map_data:
@@ -952,7 +960,6 @@ elif st.session_state.kullanici_rolu == "demo":
                             secilen_item = item
 
 
-                    # Marker eşleşti
                     if (
                         secilen_item is not None
                         and
@@ -964,7 +971,7 @@ elif st.session_state.kullanici_rolu == "demo":
                         )
 
 
-                        # Haritadan sil
+                        # Haritadan çıkar
                         st.session_state.demo_yuklenenler = [
 
                             x
@@ -977,18 +984,15 @@ elif st.session_state.kullanici_rolu == "demo":
                         ]
 
 
-                        # Havuzda yoksa ekle
-                        havuzda_var = any(
+                        # Aktif havuza ekle
+                        if not any(
 
                             x["tesisat"] == tesisat
 
                             for x
                             in st.session_state.demo_secilenler
 
-                        )
-
-
-                        if not havuzda_var:
+                        ):
 
                             st.session_state.demo_secilenler.append(
                                 secilen_item
@@ -999,7 +1003,7 @@ elif st.session_state.kullanici_rolu == "demo":
 
 
     # =====================================================
-    # SAĞ PANEL - ROTA HAVUZU
+    # SAĞ PANEL
     # =====================================================
 
     with sag:
@@ -1009,9 +1013,9 @@ elif st.session_state.kullanici_rolu == "demo":
         )
 
 
-        # -------------------------------------------------
+        # =================================================
         # ROTA ADI
-        # -------------------------------------------------
+        # =================================================
 
         rota_adi = st.text_input(
 
@@ -1019,7 +1023,7 @@ elif st.session_state.kullanici_rolu == "demo":
 
             value=st.session_state.demo_rota_adi,
 
-            key="rota_adi"
+            key="rota_adi_input"
 
         )
 
@@ -1031,30 +1035,24 @@ elif st.session_state.kullanici_rolu == "demo":
 
 
         # =================================================
-        # HAVUZ
+        # AKTİF ROTA HAVUZU
         # =================================================
+
+        st.markdown(
+            "##### 📋 Seçilen Tesisatlar"
+        )
+
 
         if st.session_state.demo_secilenler:
 
             st.success(
-                f"Toplam "
                 f"{len(st.session_state.demo_secilenler)} "
-                f"tesisat"
-            )
-
-
-            st.markdown(
-                """
-                <div class="havuz-baslik">
-                    📋 Rota Tesisatları
-                </div>
-                """,
-                unsafe_allow_html=True
+                "tesisat seçildi."
             )
 
 
             # -------------------------------------------------
-            # TESİSATLAR
+            # TESİSATLARI BUTON OLARAK GÖSTER
             # -------------------------------------------------
 
             for idx, item in enumerate(
@@ -1064,191 +1062,274 @@ elif st.session_state.kullanici_rolu == "demo":
                 t_no = item["tesisat"]
 
 
-                st.markdown(
-                    f"""
-                    <div class="tesisat-satir">
-                        <b>{idx + 1}.</b>
-                        {t_no}
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+                # Tesisat numarasına direkt tıklanabilir
+                # Buton
+                if st.button(
 
+                    f"{idx + 1}.  {t_no}",
 
-            st.markdown("---")
+                    key=f"havuz_tesisat_{t_no}_{idx}",
 
+                    use_container_width=True
 
-            # =================================================
-            # HARİTAYA GERİ GÖNDERME
-            # =================================================
-
-            st.markdown(
-                "##### ↩️ Haritaya Geri Gönder"
-            )
-
-
-            secilecek = st.multiselect(
-
-                "Tesisat seçin",
-
-                options=[
-                    x["tesisat"]
-                    for x
-                    in st.session_state.demo_secilenler
-                ],
-
-                label_visibility="collapsed"
-
-            )
-
-
-            if st.button(
-                "↩️ Seçilenleri Haritaya Gönder",
-                use_container_width=True
-            ):
-
-                if secilecek:
-
-                    geri_gonderilecek = []
-
-                    kalanlar = []
-
-
-                    for item in st.session_state.demo_secilenler:
-
-                        if item["tesisat"] in secilecek:
-
-                            geri_gonderilecek.append(item)
-
-                        else:
-
-                            kalanlar.append(item)
-
+                ):
 
                     # Havuzdan çıkar
-                    st.session_state.demo_secilenler = kalanlar
+                    st.session_state.demo_secilenler.pop(
+                        idx
+                    )
 
 
-                    # Haritaya geri koy
-                    mevcut_harita = {
-                        x["tesisat"]
+                    # Haritaya geri gönder
+                    if not any(
+
+                        x["tesisat"] == t_no
+
                         for x
                         in st.session_state.demo_yuklenenler
-                    }
 
+                    ):
 
-                    for item in geri_gonderilecek:
-
-                        if item["tesisat"] not in mevcut_harita:
-
-                            st.session_state.demo_yuklenenler.append(
-                                item
-                            )
+                        st.session_state.demo_yuklenenler.append(
+                            item
+                        )
 
 
                     st.rerun()
 
 
-            # =================================================
-            # EXCEL
-            # =================================================
+            st.caption(
+                "💡 Tesisat numarasına tıklarsanız "
+                "haritaya geri gönderilir."
+            )
+
 
             st.markdown("---")
 
 
-            excel_df = pd.DataFrame([
+            # =================================================
+            # ROTAYI KAYDET
+            # =================================================
 
-                {
+            if st.button(
+                "💾 Rotayı Kaydet",
+                use_container_width=True
+            ):
 
-                    "Rota Adı":
-                    rota_adi,
+                if not rota_adi.strip():
 
-                    "Sıra":
-                    i + 1,
+                    st.error(
+                        "Lütfen rota adı girin."
+                    )
 
-                    "Tesisat":
-                    item["tesisat"],
+                else:
 
-                    "Enlem":
-                    item["lat"],
+                    # Aynı rota adı varsa uyar
+                    ayni_isim = any(
 
-                    "Boylam":
-                    item["lon"]
+                        r["rota_adi"].lower()
+                        ==
+                        rota_adi.strip().lower()
 
-                }
+                        for r
+                        in st.session_state.demo_kayitli_rotalar
 
-                for i, item
-                in enumerate(
-                    st.session_state.demo_secilenler
-                )
-
-            ])
-
-
-            # -------------------------------------------------
-            # EXCEL DOSYASI
-            # -------------------------------------------------
-
-            output = BytesIO()
-
-
-            try:
-
-                with pd.ExcelWriter(
-                    output,
-                    engine="openpyxl"
-                ) as writer:
-
-                    excel_df.to_excel(
-                        writer,
-                        index=False,
-                        sheet_name="Rota"
                     )
 
 
-                processed_data = (
-                    output.getvalue()
-                )
+                    if ayni_isim:
+
+                        st.warning(
+                            "Bu isimde bir rota zaten kayıtlı. "
+                            "Farklı bir rota adı kullanın."
+                        )
+
+                    else:
+
+                        # Excel'e gidecek sade bilgiler
+                        kayit = []
+
+                        for sira, item in enumerate(
+
+                            st.session_state.demo_secilenler,
+
+                            start=1
+
+                        ):
+
+                            kayit.append({
+
+                                "Rota Adı":
+                                rota_adi.strip(),
+
+                                "Sıra":
+                                sira,
+
+                                "Tesisat":
+                                item["tesisat"]
+
+                            })
 
 
-                st.download_button(
+                        st.session_state.demo_kayitli_rotalar.append({
 
-                    label="📊 Rota Excelini İndir",
+                            "rota_adi":
+                            rota_adi.strip(),
 
-                    data=processed_data,
+                            "tesisatlar":
+                            kayit
 
-                    file_name=(
-                        f"{rota_adi}.xlsx"
-                    ),
-
-                    mime=(
-                        "application/vnd.openxmlformats-officedocument."
-                        "spreadsheetml.sheet"
-                    ),
-
-                    use_container_width=True
-
-                )
+                        })
 
 
-            except Exception as e:
+                        # Aktif havuzu temizle
+                        st.session_state.demo_secilenler = []
 
-                st.error(
-                    f"Excel oluşturulamadı: {e}"
-                )
+
+                        # Harita dışındaki tesisatlar zaten
+                        # kaydedildiği için tekrar eklenemez
+
+
+                        # Sonraki rota adını otomatik artır
+                        sonraki_no = (
+                            len(
+                                st.session_state.demo_kayitli_rotalar
+                            )
+                            +
+                            1
+                        )
+
+
+                        st.session_state.demo_rota_adi = (
+                            f"Rota {sonraki_no}"
+                        )
+
+
+                        st.success(
+                            f"✅ {rota_adi.strip()} kaydedildi."
+                        )
+
+
+                        st.rerun()
 
 
         else:
 
-            # =================================================
-            # BOŞ HAVUZ
-            # =================================================
-
             st.info(
-                "📌 Rota havuzu boş."
+                "Rota havuzu boş."
             )
 
-            st.caption(
-                "Haritadaki yeşil tesisatlara "
-                "tıklayarak buraya ekleyebilirsiniz."
+
+        # =================================================
+        # KAYITLI ROTALAR
+        # =================================================
+
+        if st.session_state.demo_kayitli_rotalar:
+
+            st.markdown("---")
+
+            st.markdown(
+                "##### 💾 Kaydedilen Rotalar"
             )
+
+
+            for rota in st.session_state.demo_kayitli_rotalar:
+
+                st.markdown(
+
+                    f"""
+                    <div class="kayitli-rota">
+                        <b>📁 {rota["rota_adi"]}</b>
+                        <br>
+                        <small>
+                        {len(rota["tesisatlar"])} tesisat
+                        </small>
+                    </div>
+                    """,
+
+                    unsafe_allow_html=True
+
+                )
+
+
+            # =================================================
+            # TÜM ROTALARI EXCEL
+            # =================================================
+
+            tum_kayitlar = []
+
+
+            for rota in st.session_state.demo_kayitli_rotalar:
+
+                tum_kayitlar.extend(
+                    rota["tesisatlar"]
+                )
+
+
+            if tum_kayitlar:
+
+                final_df = pd.DataFrame(
+                    tum_kayitlar,
+
+                    columns=[
+                        "Rota Adı",
+                        "Sıra",
+                        "Tesisat"
+                    ]
+
+                )
+
+
+                output = BytesIO()
+
+
+                try:
+
+                    with pd.ExcelWriter(
+                        output,
+                        engine="openpyxl"
+                    ) as writer:
+
+                        final_df.to_excel(
+
+                            writer,
+
+                            index=False,
+
+                            sheet_name="Rotalar"
+
+                        )
+
+
+                    excel_data = output.getvalue()
+
+
+                    st.markdown("---")
+
+
+                    st.download_button(
+
+                        label=(
+                            "📊 TÜM ROTALARI "
+                            "EXCELE AKTAR"
+                        ),
+
+                        data=excel_data,
+
+                        file_name="Tum_Rotalar.xlsx",
+
+                        mime=(
+                            "application/vnd.openxmlformats-officedocument."
+                            "spreadsheetml.sheet"
+                        ),
+
+                        use_container_width=True
+
+                    )
+
+
+                except Exception as e:
+
+                    st.error(
+                        f"Excel oluşturulurken hata oluştu: {e}"
+                    )
