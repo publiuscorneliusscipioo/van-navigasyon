@@ -3,6 +3,7 @@ import pandas as pd
 import streamlit as st
 import folium
 from streamlit_folium import st_folium
+from io import BytesIO
 
 st.set_page_config(page_title="Van-Navigasyon", page_icon="📍", layout="wide")
 
@@ -21,10 +22,13 @@ def veri_yukle():
 
 df = veri_yukle()
 
+# --- SESSION STATE TANIMLAMALARI ---
 if "giris_yapildi" not in st.session_state:
     st.session_state.giris_yapildi = False
+if "kullanici_rolu" not in st.session_state:
+    st.session_state.kullanici_rolu = None
 
-# Konum hafızası
+# Admin Hafızası
 if "son_lat" not in st.session_state:
     st.session_state.son_lat = 38.5
 if "son_lon" not in st.session_state:
@@ -36,21 +40,27 @@ if "aktif_tesisat" not in st.session_state:
 if "hata_mesaji" not in st.session_state:
     st.session_state.hata_mesaji = None
 
-# Telefonda üstlerin kesilmemesi ve rahat kaydırma (scroll) olması için ideal kenar boşlukları
+# Demo / Rota Hafızası
+if "demo_yuklenenler" not in st.session_state:
+    st.session_state.demo_yuklenenler = [] # Haritada olanlar
+if "demo_secilenler" not in st.session_state:
+    st.session_state.demo_secilenler = [] # Sağ panelde birikenler (seçilenler)
+
+# Stil düzenlemeleri (PC uyumlu geniş alan)
 st.markdown("""
     <style>
     .block-container {
-        padding-top: 2rem;
-        padding-bottom: 3rem;
-        padding-left: 1rem;
-        padding-right: 1rem;
+        padding-top: 1.5rem;
+        padding-bottom: 2rem;
+        padding-left: 2rem;
+        padding-right: 2rem;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# --- GİRİŞ ---
+# --- GİRİŞ EKRANI ---
 if not st.session_state.giris_yapildi:
-    st.title("Van-Navigasyon")
+    st.title("Van-Navigasyon Giriş")
     with st.form("login_form"):
         kadi = st.text_input("Kullanıcı Adı", placeholder="Kullanıcı Adı")
         sifre = st.text_input("Şifre", type="password", placeholder="Şifre")
@@ -58,14 +68,25 @@ if not st.session_state.giris_yapildi:
         if giris:
             if kadi == "admin" and sifre == "admin":
                 st.session_state.giris_yapildi = True
+                st.session_state.kullanici_rolu = "admin"
+                st.rerun()
+            elif kadi == "demo" and sifre == "demo":
+                st.session_state.giris_yapildi = True
+                st.session_state.kullanici_rolu = "demo"
                 st.rerun()
             else:
-                st.error("Hatalı Kullanıcı Adı veya Şifre!")
+                st.error("Hatalı Kullanıcı Adı veya Şifre! (Admin için: admin/admin, Demo için: demo/demo)")
 
-# --- HARİTA VE ARAMA ---
-else:
-    # İdeal boyutta, ikonsuz başlık
-    st.markdown("### Van Navigasyon")
+# --- 1. ADMIN PANELİ ---
+elif st.session_state.kullanici_rolu == "admin":
+    col_baslik, col_cikis = st.columns([8, 1])
+    with col_baslik:
+        st.markdown("### Van Navigasyon - Admin Paneli")
+    with col_cikis:
+        if st.button("Çıkış Yap"):
+            st.session_state.giris_yapildi = False
+            st.session_state.kullanici_rolu = None
+            st.rerun()
 
     with st.form("arama_formu"):
         tesisat_no = st.text_input("Tesisat No", placeholder="Tesisat No girin...", value=st.session_state.aktif_tesisat if st.session_state.aktif_tesisat else "")
@@ -107,13 +128,11 @@ else:
                         st.session_state.hata_mesaji = "Bu tesisata ait geçerli koordinat bulunamadı!"
                         st.session_state.aktif_tesisat = None
 
-    # Mesaj Durumları
     if st.session_state.hata_mesaji:
         st.error(st.session_state.hata_mesaji)
     elif st.session_state.aktif_tesisat:
         st.success(f"Tesisat Bulundu: {st.session_state.aktif_tesisat}")
 
-    # Folium Haritasını Oluştur
     m = folium.Map(
         location=[st.session_state.son_lat, st.session_state.son_lon], 
         zoom_start=st.session_state.son_zoom
@@ -132,7 +151,6 @@ else:
             </a>
         </div>
         """
-        
         folium.CircleMarker(
             location=[st.session_state.son_lat, st.session_state.son_lon],
             radius=12,
@@ -143,5 +161,136 @@ else:
             popup=folium.Popup(popup_html, max_width=300)
         ).add_to(m)
 
-    # Haritayı ekrana bas
     st_folium(m, use_container_width=True, height=500)
+
+# --- 2. DEMO / ROTA PLANLAMA PANELİ (PC UYUMLU İKİ SÜTUN) ---
+elif st.session_state.kullanici_rolu == "demo":
+    col_baslik, col_cikis = st.columns([8, 1])
+    with col_baslik:
+        st.markdown("### 🗺️ Demo Rota Planlama Paneli (Masaüstü)")
+    with col_cikis:
+        if st.button("Çıkış Yap"):
+            st.session_state.giris_yapildi = False
+            st.session_state.kullanici_rolu = None
+            st.rerun()
+
+    # Masaüstü için yan yana iki ana sütun (Sol: Harita, Sağ: Yönetim Paneli)
+    col_sol, col_sag = st.columns([7, 3])
+
+    with col_sag:
+        st.markdown("#### 📥 Toplu Tesisat Yükleme")
+        toplu_input = st.text_area("Alt alta tesisat numaralarını girin:", height=150, placeholder="1001\n1002\n1003...")
+        
+        if st.button("Tesisatları Haritaya Yükle", use_container_width=True):
+            if df is None:
+                st.error("Tesisatlar.xlsx dosyası bulunamadı!")
+            else:
+                girilen_liste = [t.strip() for t in toplu_input.split("\n") if t.strip()]
+                bulunanlar = []
+                for t_no in girilen_liste:
+                    # Daha önce haritada veya seçilenlerde yoksa ekle
+                    if t_no not in st.session_state.demo_yuklenenler and t_no not in st.session_state.demo_secilenler:
+                        match = df[df["Tesisat"] == t_no]
+                        if not match.empty:
+                            row = match.iloc[0]
+                            lat, lon = None, None
+                            for l_col, b_col in [("Enlem.1", "Boylam.1"), ("Enlem", "Boylam")]:
+                                try:
+                                    v_lat = float(str(row[l_col]).replace(",", "."))
+                                    v_lon = float(str(row[b_col]).replace(",", "."))
+                                    if v_lat != 0 and v_lon != 0:
+                                        lat, lon = v_lat, v_lon
+                                        break
+                                except:
+                                    pass
+                            if lat and lon:
+                                bulunanlar.append({"tesisat": t_no, "lat": lat, "lon": lon})
+                
+                st.session_state.demo_yuklenenler.extend(bulunanlar)
+                st.success(f"{len(bulunanlar)} adet tesisat haritaya eklendi.")
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("#### 📌 Rota Listesi (Sağ Panel)")
+        
+        rota_adi = st.text_input("Rota Adı", value="Rota 1")
+
+        if st.session_state.demo_secilenler:
+            st.info(f"Seçilen Toplam Tesisat: {len(st.session_state.demo_secilenler)}")
+            
+            # Listelenen tesisatlar (tıklandığında haritaya geri dönmesi için butonlar)
+            st.markdown("<small>Çıkarmak istediğiniz tesisata tıklayın:</small>", unsafe_allow_html=True)
+            for idx, item in enumerate(st.session_state.demo_secilenler):
+                if st.button(f"❌ {item['tesisat']}", key=f"cikar_{idx}", use_container_width=True):
+                    # Seçilenlerden çıkar, haritaya geri ekle
+                    st.session_state.demo_secilenler.pop(idx)
+                    st.session_state.demo_yuklenenler.append(item)
+                    st.rerun()
+
+            # Excel'e İndir Butonu
+            excel_df = pd.DataFrame([{ "Rota Adı": rota_adi, "Tesisat": i["tesisat"], "Enlem": i["lat"], "Boylam": i["lon"] } for i in st.session_state.demo_secilenler])
+            
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                excel_df.to_excel(writer, index=False, sheet_name='Rota')
+            processed_data = output.getvalue()
+
+            st.download_button(
+                label="📊 Rota Excel Dosyasını İndir",
+                data=processed_data,
+                file_name=f"{rota_adi}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+        else:
+            st.markdown("_Henüz sağ panele tesisat seçilmedi. Haritadaki noktalara tıklayın._")
+
+        if st.button("Tümünü Temizle", use_container_width=True):
+            st.session_state.demo_yuklenenler = []
+            st.session_state.demo_secilenler = []
+            st.rerun()
+
+    with col_sol:
+        st.markdown("#### Harita Görünümü (Haritadaki noktaya tıklayarak sağ panele alabilirsiniz)")
+        
+        # Harita merkezini belirleme (ilk yüklenen noktanın merkezi veya Van)
+        harita_merkez = [38.5, 43.4]
+        if st.session_state.demo_yuklenenler:
+            harita_merkez = [st.session_state.demo_yuklenenler[0]["lat"], st.session_state.demo_yuklenenler[0]["lon"]]
+        elif st.session_state.demo_secilenler:
+            harita_merkez = [st.session_state.demo_secilenler[0]["lat"], st.session_state.demo_secilenler[0]["lon"]]
+
+        m_demo = folium.Map(location=harita_merkez, zoom_start=13)
+
+        # Haritada bekleyen tesisatları çiz
+        for item in st.session_state.demo_yuklenenler:
+            t_no = item["tesisat"]
+            # Folium popup içine HTML ve buton yerleştiriyoruz
+            popup_content = f"""
+            <div style="font-family:sans-serif; text-align:center;">
+                <b>Tesisat: {t_no}</b><br><br>
+                <b>Bu tesisatı sağ panele almak için sayfayı yenileyin veya listeden seçin.</b>
+            </div>
+            """
+            folium.Marker(
+                location=[item["lat"], item["lon"]],
+                popup=folium.Popup(popup_content, max_width=250),
+                tooltip=f"Tesisat: {t_no} (Sağ panele atmak için tıklayın)",
+                icon=folium.Icon(color="green", icon="info-sign")
+            ).add_to(m_demo)
+
+        # Haritadan tıklama yakalama
+        map_data = st_folium(m_demo, use_container_width=True, height=600)
+
+        # Eğer kullanıcı harita üzerinde bir marker'a tıkladıysa
+        if map_data and map_data.get("last_clicked"):
+            click_lat = map_data["last_clicked"]["lat"]
+            click_lon = map_data["last_clicked"]["lng"]
+            
+            # Tıklanan koordinata en yakın haritadaki yüklenmiş tesisatı bul
+            for item in st.session_state.demo_yuklenenler:
+                # Küçük bir tolerans ile eşleşme kontrolü
+                if abs(item["lat"] - click_lat) < 0.0001 and abs(item["lon"] - click_lon) < 0.0001:
+                    st.session_state.demo_yuklenenler.remove(item)
+                    st.session_state.demo_secilenler.append(item)
+                    st.rerun()
